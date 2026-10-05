@@ -553,123 +553,504 @@ const detail = computed(() => {
 </script>
 
 <template>
-  <div class="team">
-    <h2>Team Dashboard</h2>
+  <div class="team-dashboard">
+    <!-- HEADER -->
+    <div class="dashboard-header">
+      <div>
+        <h2>My Team</h2>
+        <p>Overview of your team's attendance, timesheets, leaves and activity.</p>
+      </div>
 
-    <p
-      class="muted"
-      style="margin-top:-12px"
-    >
-      Select a card, then a name, to see
-      the details.
-    </p>
+      <div class="header-date">
+        <input type="date" v-model="viewDate" />
+        <button type="button" @click="viewDate = today">Today</button>
+      </div>
+    </div>
 
-    <p
-      v-if="error"
-      class="err"
-    >
-      {{ error }}
-    </p>
+    <p v-if="error" class="error-message">{{ error }}</p>
 
-    <p v-if="loading">
-      Loading...
+    <p v-if="loading" class="loading-message">
+      Loading team dashboard...
     </p>
 
     <template v-else>
 
-      <!-- TEAM OVERVIEW -->
-      <div class="stats">
-        <div
-          :class="[
-            'stat',
-            { on: selected === 'members' }
-          ]"
-          tabindex="0"
+      <!-- SUMMARY CARDS -->
+      <section class="summary-grid">
+
+        <button
+          type="button"
+          class="summary-card"
           @click="pick('members')"
-          @keydown.enter="pick('members')"
         >
-          <div class="lbl">
-            Team members
+          <div class="summary-icon blue-icon">👥</div>
+          <div class="summary-content">
+            <span>Total Team Members</span>
+            <strong>{{ team.length }}</strong>
+            <small>Active team members</small>
           </div>
+        </button>
 
-          <div class="num blue">
-            {{ team.length }}
+        <button
+          type="button"
+          class="summary-card"
+          @click="pick('present')"
+        >
+          <div class="summary-icon green-icon">✓</div>
+          <div class="summary-content">
+            <span>Present Today</span>
+            <strong>{{ attendanceStats.present }}</strong>
+            <small>Marked present</small>
           </div>
-        </div>
+        </button>
 
-        <div
-          :class="[
-            'stat',
-            { on: selected === 'onleave' }
-          ]"
-          tabindex="0"
+        <button
+          type="button"
+          class="summary-card"
           @click="pick('onleave')"
-          @keydown.enter="pick('onleave')"
         >
-          <div class="lbl">
-            On leave on selected date
+          <div class="summary-icon purple-icon">◷</div>
+          <div class="summary-content">
+            <span>On Leave Today</span>
+            <strong>{{ attendanceStats.onLeave }}</strong>
+            <small>Approved leave</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="summary-card"
+          @click="pick('absent')"
+        >
+          <div class="summary-icon red-icon">!</div>
+          <div class="summary-content">
+            <span>Absent Today</span>
+            <strong>{{ attendanceStats.absent }}</strong>
+            <small>Not present</small>
+          </div>
+        </button>
+
+      </section>
+
+      <!-- OVERVIEW -->
+      <section class="overview-grid">
+
+        <!-- ATTENDANCE -->
+        <div class="dashboard-card">
+          <div class="card-heading">
+            <div>
+              <h3>Attendance Overview</h3>
+              <p>Team attendance for {{ viewDate }}</p>
+            </div>
+
+            <span class="percentage-pill">
+              {{ attendancePercentage }}%
+            </span>
           </div>
 
-          <div class="num red">
-            {{ onLeave.length }}
+          <div v-if="attendanceLoading" class="empty-state">
+            Loading attendance...
+          </div>
+
+          <div v-else class="overview-content">
+
+            <div
+              class="attendance-ring"
+              :style="{ '--attendance': attendancePercentage }"
+            >
+              <div class="ring-value">
+                <strong>{{ attendancePercentage }}%</strong>
+                <span>Attendance</span>
+              </div>
+            </div>
+
+            <div class="legend-list">
+              <div class="legend-item">
+                <span class="legend-dot present-dot"></span>
+                <span>Present</span>
+                <strong>{{ attendanceStats.present }}</strong>
+              </div>
+
+              <div class="legend-item">
+                <span class="legend-dot absent-dot"></span>
+                <span>Absent</span>
+                <strong>{{ attendanceStats.absent }}</strong>
+              </div>
+
+              <div class="legend-item">
+                <span class="legend-dot leave-dot"></span>
+                <span>On Leave</span>
+                <strong>{{ attendanceStats.onLeave }}</strong>
+              </div>
+
+              <div class="legend-item">
+                <span class="legend-dot half-dot"></span>
+                <span>Half Day</span>
+                <strong>{{ attendanceStats.halfDay }}</strong>
+              </div>
+            </div>
+
           </div>
         </div>
 
-        <div
-          :class="[
-            'stat',
-            { on: selected === 'pending' }
-          ]"
-          tabindex="0"
-          @click="pick('pending')"
-          @keydown.enter="pick('pending')"
-        >
-          <div class="lbl">
-            Pending requests
+        <!-- TIMESHEETS -->
+        <div class="dashboard-card">
+          <div class="card-heading">
+            <div>
+              <h3>Timesheet Overview</h3>
+              <p>Timesheet activity across your team</p>
+            </div>
+
+            <span class="overview-count">
+              {{ timesheetStats.total }}
+            </span>
           </div>
 
-          <div class="num amber">
-            {{ pendingList.length }}
+          <div v-if="timesheetLoading" class="empty-state">
+            Loading timesheets...
+          </div>
+
+          <div v-else class="timesheet-overview">
+
+            <div
+              class="timesheet-ring"
+              :style="{
+                '--completion': timesheetStats.total
+                  ? Math.round(
+                      (timesheetStats.submitted / timesheetStats.total) * 100
+                    )
+                  : 0
+              }"
+            >
+              <div class="ring-value">
+                <strong>
+                  {{
+                    timesheetStats.total
+                      ? Math.round(
+                          (timesheetStats.submitted / timesheetStats.total) * 100
+                        )
+                      : 0
+                  }}%
+                </strong>
+                <span>Submitted</span>
+              </div>
+            </div>
+
+            <div class="timesheet-status-list">
+              <div>
+                <span>Submitted</span>
+                <strong class="status-green">
+                  {{ timesheetStats.submitted }}
+                </strong>
+              </div>
+
+              <div>
+                <span>Pending</span>
+                <strong class="status-amber">
+                  {{ timesheetStats.draft }}
+                </strong>
+              </div>
+
+              <div>
+                <span>Cancelled</span>
+                <strong class="status-red">
+                  {{ timesheetStats.cancelled }}
+                </strong>
+              </div>
+            </div>
+
           </div>
         </div>
 
-        <div
-          :class="[
-            'stat',
-            { on: selected === 'upcoming' }
-          ]"
-          tabindex="0"
-          @click="pick('upcoming')"
-          @keydown.enter="pick('upcoming')"
-        >
-          <div class="lbl">
-            Upcoming leaves
+        <!-- LEAVE -->
+        <div class="dashboard-card">
+          <div class="card-heading">
+            <div>
+              <h3>Leave Overview</h3>
+              <p>Current team leave information</p>
+            </div>
+
+            <span class="overview-count purple-count">
+              {{ onLeave.length }}
+            </span>
           </div>
 
-          <div class="num green">
-            {{ upcoming.length }}
+          <div class="leave-overview">
+
+            <div class="leave-bars">
+
+              <div class="leave-bar-row">
+                <span>On Leave</span>
+
+                <div class="leave-bar-track">
+                  <div
+                    class="leave-bar-fill purple-fill"
+                    :style="{
+                      width: team.length
+                        ? Math.min((onLeave.length / team.length) * 100, 100) + '%'
+                        : '0%'
+                    }"
+                  ></div>
+                </div>
+
+                <strong>{{ onLeave.length }}</strong>
+              </div>
+
+              <div class="leave-bar-row">
+                <span>Pending</span>
+
+                <div class="leave-bar-track">
+                  <div
+                    class="leave-bar-fill amber-fill"
+                    :style="{
+                      width: team.length
+                        ? Math.min((pendingList.length / team.length) * 100, 100) + '%'
+                        : '0%'
+                    }"
+                  ></div>
+                </div>
+
+                <strong>{{ pendingList.length }}</strong>
+              </div>
+
+              <div class="leave-bar-row">
+                <span>Upcoming</span>
+
+                <div class="leave-bar-track">
+                  <div
+                    class="leave-bar-fill green-fill"
+                    :style="{
+                      width: team.length
+                        ? Math.min((upcoming.length / team.length) * 100, 100) + '%'
+                        : '0%'
+                    }"
+                  ></div>
+                </div>
+
+                <strong>{{ upcoming.length }}</strong>
+              </div>
+
+            </div>
+
+          </div>
+
+          <button
+            v-if="pendingList.length"
+            type="button"
+            class="secondary-action"
+            @click="router.push('/team?tab=approvals')"
+          >
+            Review pending approvals
+          </button>
+
+        </div>
+
+      </section>
+
+      <!-- TEAM MEMBERS -->
+      <section class="team-members-card">
+
+        <div class="members-header">
+          <div>
+            <h3>Team Members</h3>
+            <p>View attendance, timesheet and leave information for your team.</p>
+          </div>
+
+          <div class="members-actions">
+            <button
+              type="button"
+              :class="{ active: selected === 'members' }"
+              @click="pick('members')"
+            >
+              All Members
+            </button>
+
+            <button
+              type="button"
+              :class="{ active: selected === 'onleave' }"
+              @click="pick('onleave')"
+            >
+              On Leave
+            </button>
+
+            <button
+              type="button"
+              :class="{ active: selected === 'pending' }"
+              @click="pick('pending')"
+            >
+              Pending
+            </button>
           </div>
         </div>
-      </div>
+
+        <!-- SEARCH / FILTER BAR -->
+        <div class="table-toolbar">
+          <div class="search-box">
+            <span>⌕</span>
+            <input
+              type="text"
+              placeholder="Search team members..."
+            />
+          </div>
+
+          <div class="toolbar-actions">
+            <button type="button">Filter</button>
+            <button type="button">Export</button>
+          </div>
+        </div>
+
+        <!-- ATTENDANCE TABLE -->
+        <div class="table-container">
+          <table class="members-table">
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Status Today</th>
+                <th>Timesheets</th>
+                <th>Leave Balance</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <tr
+                v-for="member in team"
+                :key="member.id"
+              >
+                <td>
+                  <div class="employee-cell">
+                    <div class="employee-avatar">
+                      {{ member.name?.charAt(0)?.toUpperCase() || '?' }}
+                    </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        class="employee-name"
+                        @click="open(member.id)"
+                      >
+                        {{ member.name }}
+                      </button>
+
+                      <span>{{ member.id }}</span>
+                    </div>
+                  </div>
+                </td>
+
+                <td>
+                  <span
+                    v-if="attendanceRows.find(r => r.id === member.id)"
+                    :class="[
+                      'status-badge',
+                      (attendanceRows.find(r => r.id === member.id)?.status || '')
+                        .toLowerCase()
+                        .replace(/\s+/g, '-')
+                    ]"
+                  >
+                    {{ attendanceRows.find(r => r.id === member.id)?.status }}
+                  </span>
+                  <span v-else class="status-badge not-marked">
+                    Not Marked
+                  </span>
+                </td>
+
+                <td>
+                  <span class="table-number">
+                    {{
+                      timesheetEmployeeRows.find(
+                        r => r.id === member.id
+                      )?.timesheets || 0
+                    }}
+                  </span>
+                </td>
+
+                <td>
+                  <div
+                    v-if="member.ok && member.balances.length"
+                    class="balance-cell"
+                  >
+                    <div
+                      v-for="balance in member.balances.slice(0, 2)"
+                      :key="balance.type"
+                    >
+                      <div class="balance-line">
+                        <span>{{ balance.type }}</span>
+                        <strong>
+                          {{ balance.remaining_leaves }}
+                        </strong>
+                      </div>
+
+                      <div class="balance-bar">
+                        <div
+                          :style="{
+                            width: pct(balance) + '%'
+                          }"
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <span
+                    v-else-if="member.ok"
+                    class="muted-text"
+                  >
+                    No leave allocated
+                  </span>
+
+                  <span
+                    v-else
+                    class="muted-text"
+                  >
+                    Unavailable
+                  </span>
+                </td>
+
+                <td>
+                  <button
+                    type="button"
+                    class="view-button"
+                    @click="open(member.id)"
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>
+
+              <tr v-if="!team.length">
+                <td colspan="5" class="empty-table">
+                  No team members found.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </section>
 
       <!-- SELECTED DETAIL -->
-      <div
+      <section
         v-if="detail"
-        class="panel detail"
+        class="selected-detail"
       >
-        <div class="head">
-          <h3>{{ detail.title }}</h3>
+        <div class="detail-header">
+          <div>
+            <h3>{{ detail.title }}</h3>
+            <p>{{ detail.empty }}</p>
+          </div>
 
-          <div class="datebox">
+          <div class="detail-actions">
             <button
               v-if="detail.approvals"
-              @click="router.push('/approvals')"
+              type="button"
+              class="primary-action"
+              @click="router.push('/team?tab=approvals')"
             >
               Open approvals
             </button>
 
             <button
-              class="ghost"
+              type="button"
+              class="close-action"
               @click="selected = null"
             >
               Close
@@ -677,978 +1058,1018 @@ const detail = computed(() => {
           </div>
         </div>
 
-        <p
-          v-if="!detail.rows.length"
-          class="muted"
-        >
-          {{ detail.empty }}
-        </p>
-
         <div
-          v-for="r in detail.rows"
-          :key="r.key"
-          class="row link"
-          @click="open(r.emp)"
+          v-if="detail.rows.length"
+          class="detail-list"
         >
-          <div>
-            <b>{{ r.title }}</b>
-
-            <div class="muted">
-              {{ r.sub }}
-            </div>
-          </div>
-
-          <span
-            :class="[
-              'badge',
-              r.tag === 'Available' ||
-              r.tag.includes('day')
-                ? 'Approved'
-                : r.tag === 'On leave'
-                  ? 'Rejected'
-                  : ''
-            ]"
-          >
-            {{ r.tag }}
-          </span>
-        </div>
-      </div>
-
-      <!-- TEAM ATTENDANCE -->
-      <div class="panel attendance-panel">
-        <div class="head">
-          <div>
-            <h3>Team Attendance</h3>
-
-            <p class="muted">
-              Attendance for {{ viewDate }}
-            </p>
-          </div>
-
-          <div class="datebox">
-            <input
-              type="date"
-              v-model="viewDate"
-            />
-
-            <button
-              @click="viewDate = today"
-            >
-              Today
-            </button>
-          </div>
-        </div>
-
-        <p
-          v-if="attendanceError"
-          class="err"
-        >
-          {{ attendanceError }}
-        </p>
-
-        <p
-          v-if="attendanceLoading"
-          class="muted"
-        >
-          Loading attendance...
-        </p>
-
-        <template v-else>
-          <!-- ATTENDANCE SUMMARY -->
-          <div class="attendance-stats">
-            <div class="attendance-stat">
-              <span class="attendance-label">
-                Present
-              </span>
-
-              <strong
-                class="attendance-number present"
-              >
-                {{ attendanceStats.present }}
-              </strong>
-            </div>
-
-            <div class="attendance-stat">
-              <span class="attendance-label">
-                Absent
-              </span>
-
-              <strong
-                class="attendance-number absent"
-              >
-                {{ attendanceStats.absent }}
-              </strong>
-            </div>
-
-            <div class="attendance-stat">
-              <span class="attendance-label">
-                Half Day
-              </span>
-
-              <strong
-                class="attendance-number half"
-              >
-                {{ attendanceStats.halfDay }}
-              </strong>
-            </div>
-
-            <div class="attendance-stat">
-              <span class="attendance-label">
-                On Leave
-              </span>
-
-              <strong
-                class="attendance-number leave"
-              >
-                {{ attendanceStats.onLeave }}
-              </strong>
-            </div>
-
-            <div class="attendance-stat">
-              <span class="attendance-label">
-                Attendance
-              </span>
-
-              <strong
-                class="attendance-number percentage"
-              >
-                {{ attendancePercentage }}%
-              </strong>
-            </div>
-          </div>
-
-          <!-- EMPLOYEE ATTENDANCE TABLE -->
           <div
-            v-if="attendanceRows.length"
-            class="attendance-table-wrap"
+            v-for="row in detail.rows"
+            :key="row.key"
+            class="detail-row"
+            @click="open(row.emp)"
           >
-            <table class="attendance-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Employee ID</th>
-                  <th>Status</th>
-                  <th>Leave Type</th>
-                </tr>
-              </thead>
+            <div>
+              <strong>{{ row.title }}</strong>
+              <span>{{ row.sub }}</span>
+            </div>
 
-              <tbody>
-                <tr
-                  v-for="row in attendanceRows"
-                  :key="row.id"
-                >
-                  <td>
-                    <b
-                      class="lnk"
-                      @click="open(row.id)"
-                    >
-                      {{ row.name }}
-                    </b>
-                  </td>
-
-                  <td class="muted">
-                    {{ row.id }}
-                  </td>
-
-                  <td>
-                    <span
-                      :class="[
-                        'attendance-badge',
-                        row.status
-                          .toLowerCase()
-                          .replace(
-                            /\s+/g,
-                            '-'
-                          )
-                      ]"
-                    >
-                      {{ row.status }}
-                    </span>
-                  </td>
-
-                  <td class="muted">
-                    {{ row.leaveType || '-' }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p
-            v-else
-            class="muted"
-          >
-            No team members found.
-          </p>
-        </template>
-      </div>
-
-      <!-- TEAM TIMESHEETS -->
-      <div class="panel timesheet-panel">
-        <div class="head">
-          <div>
-            <h3>Team Timesheets</h3>
-
-            <p class="muted">
-              Timesheet activity across your team
-            </p>
+            <span class="status-badge">
+              {{ row.tag }}
+            </span>
           </div>
         </div>
-
-        <p
-          v-if="timesheetError"
-          class="err"
-        >
-          {{ timesheetError }}
-        </p>
-
-        <p
-          v-if="timesheetLoading"
-          class="muted"
-        >
-          Loading timesheets...
-        </p>
-
-        <template v-else>
-          <!-- TIMESHEET SUMMARY -->
-          <div class="timesheet-stats">
-            <div class="timesheet-stat">
-              <span class="timesheet-label">
-                Total Timesheets
-              </span>
-
-              <strong class="timesheet-number blue">
-                {{ timesheetStats.total }}
-              </strong>
-            </div>
-
-            <div class="timesheet-stat">
-              <span class="timesheet-label">
-                Total Hours
-              </span>
-
-              <strong class="timesheet-number green">
-                {{ timesheetStats.totalHours.toFixed(2) }}
-              </strong>
-            </div>
-
-            <div class="timesheet-stat">
-              <span class="timesheet-label">
-                Draft
-              </span>
-
-              <strong class="timesheet-number amber">
-                {{ timesheetStats.draft }}
-              </strong>
-            </div>
-
-            <div class="timesheet-stat">
-              <span class="timesheet-label">
-                Submitted
-              </span>
-
-              <strong class="timesheet-number blue">
-                {{ timesheetStats.submitted }}
-              </strong>
-            </div>
-
-            <div class="timesheet-stat">
-              <span class="timesheet-label">
-                Cancelled
-              </span>
-
-              <strong class="timesheet-number red">
-                {{ timesheetStats.cancelled }}
-              </strong>
-            </div>
-          </div>
-
-          <!-- EMPLOYEE TIMESHEET TABLE -->
-          <div
-            v-if="timesheetEmployeeRows.length"
-            class="timesheet-table-wrap"
-          >
-            <table class="timesheet-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Timesheets</th>
-                  <th>Total Hours</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                <tr
-                  v-for="row in timesheetEmployeeRows"
-                  :key="row.id"
-                >
-                  <td>
-                    <b
-                      class="lnk"
-                      @click="open(row.id)"
-                    >
-                      {{ row.name }}
-                    </b>
-
-                    <div class="muted">
-                      {{ row.id }}
-                    </div>
-                  </td>
-
-                  <td>
-                    {{ row.timesheets }}
-                  </td>
-
-                  <td>
-                    <b>
-                      {{ row.hours.toFixed(2) }}
-                    </b>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p
-            v-else
-            class="muted"
-          >
-            No timesheets found for your team.
-          </p>
-        </template>
-      </div>
-
-      <!-- WHO IS ON LEAVE -->
-      <div class="panel">
-        <div class="head">
-          <h3>Who is on leave</h3>
-
-          <div class="datebox">
-            <input
-              type="date"
-              v-model="viewDate"
-            />
-
-            <button
-              @click="viewDate = today"
-            >
-              Today
-            </button>
-          </div>
-        </div>
-
-        <p
-          v-if="!onLeave.length"
-          class="muted"
-        >
-          Nobody is on approved leave on
-          {{ viewDate }}.
-        </p>
-
-        <div
-          v-for="l in onLeave"
-          :key="l.name"
-          class="row link"
-          @click="open(l.employee)"
-        >
-          <div>
-            <b>{{ l.employee_name }}</b>
-
-            <div class="muted">
-              {{ l.leave_type }} ·
-              {{ l.from_date }} to
-              {{ l.to_date }}
-            </div>
-          </div>
-
-          <span class="badge Approved">
-            {{ l.total_leave_days }} day(s)
-          </span>
-        </div>
-      </div>
-
-      <!-- TEAM LEAVE BALANCE -->
-      <div class="panel">
-        <h3>Team leave balance</h3>
-
-        <p
-          v-if="!team.length"
-          class="muted"
-        >
-          No team members yet. They appear
-          once they apply for leave or list
-          you as their leave approver.
-        </p>
-
-        <table v-if="team.length">
-          <thead>
-            <tr>
-              <th>Employee</th>
-              <th>Leave balance</th>
-              <th>
-                Status on {{ viewDate }}
-              </th>
-            </tr>
-          </thead>
-
-          <tbody>
-            <tr
-              v-for="m in team"
-              :key="m.id"
-            >
-              <td>
-                <b
-                  class="lnk"
-                  @click="open(m.id)"
-                >
-                  {{ m.name }}
-                </b>
-
-                <div class="muted">
-                  {{ m.id }}
-                </div>
-              </td>
-
-              <td>
-                <span
-                  v-if="!m.ok"
-                  class="muted"
-                >
-                  Balance unavailable
-                </span>
-
-                <span
-                  v-else-if="!m.balances.length"
-                  class="muted"
-                >
-                  No leave allocated
-                </span>
-
-                <div
-                  v-for="b in m.balances"
-                  :key="b.type"
-                  class="bal"
-                >
-                  <div class="bar-top">
-                    <span>
-                      {{ b.type }}
-                    </span>
-
-                    <b>
-                      {{ b.remaining_leaves }}
-                      of
-                      {{ b.total_leaves }}
-                      left
-                    </b>
-                  </div>
-
-                  <div class="bar">
-                    <div
-                      :style="{
-                        width:
-                          pct(b) + '%'
-                      }"
-                    ></div>
-                  </div>
-
-                  <div class="muted">
-                    Used
-                    {{ b.leaves_taken }}
-                    · Pending
-                    {{
-                      b.leaves_pending_approval
-                    }}
-                  </div>
-                </div>
-              </td>
-
-              <td>
-                <span
-                  :class="[
-                    'badge',
-                    onLeaveIds.has(m.id)
-                      ? 'Rejected'
-                      : 'Approved'
-                  ]"
-                >
-                  {{
-                    onLeaveIds.has(m.id)
-                      ? 'On leave'
-                      : 'Available'
-                  }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- UPCOMING APPROVED LEAVES -->
-      <div class="panel">
-        <h3>Upcoming approved leaves</h3>
-
-        <p
-          v-if="!upcoming.length"
-          class="muted"
-        >
-          No upcoming approved leaves.
-        </p>
-
-        <div
-          v-for="l in upcoming"
-          :key="l.name"
-          class="row link"
-          @click="open(l.employee)"
-        >
-          <div>
-            <b>{{ l.employee_name }}</b>
-
-            <div class="muted">
-              {{ l.leave_type }} ·
-              {{ l.from_date }} to
-              {{ l.to_date }}
-            </div>
-          </div>
-
-          <span class="badge Approved">
-            {{ l.total_leave_days }} day(s)
-          </span>
-        </div>
-      </div>
+      </section>
 
     </template>
   </div>
 </template>
 
 <style scoped>
-.stats{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
-  gap:16px;
-  margin-bottom:20px
+.team-dashboard {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 28px 40px;
+  box-sizing: border-box;
+  color: #172033;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
 }
 
-.stat{
-  background:var(--card);
-  border-radius:12px;
-  padding:20px;
-  box-shadow:var(--shadow);
-  cursor:pointer;
-  border:2px solid transparent;
-  transition:transform .12s
+.dashboard-header h2 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.dashboard-header p {
+  margin: 7px 0 0;
+  color: #718096;
+  font-size: 14px;
+}
+
+.header-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.stat:hover{
-  transform:translateY(-2px)
+.header-date input,
+.header-date button,
+.toolbar-actions button,
+.members-actions button,
+.secondary-action,
+.view-button,
+.primary-action,
+.close-action {
+  font: inherit;
 }
 
-.stat.on{
-  border-color:#4f46e5
+.header-date input {
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
 }
 
-.lbl{
-  color:var(--muted);
-  font-size:14px;
-  margin-bottom:8px
+.header-date button {
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
 }
 
-.num{
-  font-size:34px;
-  font-weight:700
+.header-date button:hover {
+  background: #f8fafc;
 }
 
-.blue{
-  color:#4f46e5
+.error-message {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
 }
 
-.red{
-  color:#dc2626
+.loading-message {
+  padding: 30px 0;
+  color: #64748b;
+  text-align: center;
 }
 
-.amber{
-  color:#d97706
+/* SUMMARY */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.summary-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 118px;
+  padding: 20px;
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  text-align: left;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08);
+}
+
+.summary-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.blue-icon {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.green-icon {
+  background: #ecfdf3;
+  color: #16a34a;
+}
+
+.purple-icon {
+  background: #f3e8ff;
+  color: #7c3aed;
+}
+
+.red-icon {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.summary-content {
+  min-width: 0;
+}
+
+.summary-content span,
+.summary-content small {
+  display: block;
+}
+
+.summary-content span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.summary-content strong {
+  display: block;
+  margin: 4px 0;
+  color: #172033;
+  font-size: 27px;
+  line-height: 1;
+}
+
+.summary-content small {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* OVERVIEW */
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.dashboard-card,
+.team-members-card,
+.selected-detail {
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+}
+
+.dashboard-card {
+  min-height: 260px;
+  padding: 20px;
+}
+
+.card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.card-heading h3,
+.members-header h3,
+.detail-header h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.card-heading p,
+.members-header p,
+.detail-header p {
+  margin: 5px 0 0;
+  color: #8a94a6;
+  font-size: 12px;
+}
+
+.percentage-pill,
+.overview-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.purple-count {
+  background: #f3e8ff;
+  color: #7c3aed;
+}
+
+.overview-content {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.attendance-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 128px;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      #4f46e5
+      calc(var(--attendance, 0) * 1%),
+      #eef2f7 0
+    );
+}
+
+.attendance-ring::before {
+  content: "";
+  position: absolute;
+  width: 94px;
+  height: 94px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.ring-value {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+
+.ring-value strong {
+  display: block;
+  color: #172033;
+  font-size: 22px;
+}
+
+.ring-value span {
+  color: #8a94a6;
+  font-size: 10px;
+}
+
+.legend-list {
+  flex: 1;
+}
+
+.legend-item {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.legend-item strong {
+  color: #172033;
+  font-size: 12px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.present-dot {
+  background: #22c55e;
+}
+
+.absent-dot {
+  background: #ef4444;
+}
+
+.leave-dot {
+  background: #8b5cf6;
+}
+
+.half-dot {
+  background: #f59e0b;
+}
+
+.timesheet-overview {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-height: 160px;
+}
+
+.timesheet-status-list {
+  flex: 1;
+}
+
+.timesheet-status-list > div,
+.status-green {
+  color: #16a34a !important;
+}
+
+.status-amber {
+  color: #d97706 !important;
+}
+
+.status-red {
+  color: #dc2626 !important;
+}
+
+.leave-overview {
+  margin-bottom: 14px;
+}
+
+.secondary-action {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #d9dded;
+  border-radius: 7px;
+  background: #f8f9ff;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-action:hover {
+  background: #eef2ff;
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+/* TEAM MEMBERS */
+
+.team-members-card {
+  padding: 20px;
+}
+
+.members-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.members-actions {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #f1f3f7;
+}
+
+.members-actions button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.members-actions button:hover,
+.members-actions button.active {
+  background: #fff;
+  color: #4338ca;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .08);
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-.green{
-  color:#16a34a
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 320px;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+  background: #fff;
 }
 
-.panel{
-  background:var(--card);
-  border-radius:12px;
-  padding:20px;
-  box-shadow:var(--shadow);
-  margin-bottom:20px
+.search-box span {
+  color: #94a3b8;
+  font-size: 18px;
 }
 
-.panel h3{
-  margin:0 0 14px
+.search-box input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: #334155;
+  font-size: 12px;
 }
 
-.detail{
-  border:2px solid #c7d2fe
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
 }
 
-.head{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  flex-wrap:wrap;
-  gap:10px;
-  margin-bottom:6px
+.toolbar-actions button {
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.head h3{
-  margin:0
+.toolbar-actions button:hover {
+  background: #f8fafc;
 }
 
-.datebox{
-  display:flex;
-  gap:8px
+.table-container {
+  width: 100%;
+  overflow-x: auto;
 }
 
-.datebox input{
-  padding:8px
+.members-table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-.ghost{
-  background:#e5e7eb;
-  color:#1f2937
+.members-table th,
+.members-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid #edf0f4;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.ghost:hover{
-  background:#d1d5db
+.members-table th {
+  background: #fafbfc;
+  color: #7b8494;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
 }
 
-.muted{
-  color:var(--muted);
-  font-size:13px
+.members-table td {
+  color: #475569;
+  font-size: 12px;
 }
 
-.err{
-  color:var(--red)
+.members-table tbody tr:hover {
+  background: #fafbff;
 }
 
-.row{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:10px 8px;
-  border-bottom:1px solid #f1f5f9;
-  border-radius:8px
+.employee-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.row:last-child{
-  border-bottom:0
+.employee-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.row.link{
-  cursor:pointer
+.employee-cell > div:last-child {
+  min-width: 0;
 }
 
-.row.link:hover{
-  background:#f5f3ff
+.employee-name {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
 }
 
-.lnk{
-  cursor:pointer;
-  color:#4f46e5
+.employee-name:hover {
+  color: #4f46e5;
 }
 
-.lnk:hover{
-  text-decoration:underline
+.employee-cell span {
+  display: block;
+  margin-top: 3px;
+  color: #9aa3b2;
+  font-size: 10px;
 }
 
-.badge{
-  padding:4px 10px;
-  border-radius:99px;
-  font-size:12px;
-  font-weight:600;
-  background:#fef3c7;
-  color:#92400e;
-  white-space:nowrap
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 99px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.badge.Approved{
-  background:#dcfce7;
-  color:#166534
+.status-badge.present,
+.status-badge.approved,
+.status-badge.available {
+  background: #dcfce7;
+  color: #166534;
 }
 
-.badge.Rejected{
-  background:#fee2e2;
-  color:#991b1b
+.status-badge.absent,
+.status-badge.rejected {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
-.bal{
-  margin-bottom:12px
+.status-badge.on-leave {
+  background: #ede9fe;
+  color: #6d28d9;
 }
 
-.bar-top{
-  display:flex;
-  justify-content:space-between;
-  font-size:14px;
-  margin-bottom:4px;
-  gap:12px
+.status-badge.half-day {
+  background: #fef3c7;
+  color: #92400e;
 }
 
-.bar{
-  height:8px;
-  background:#e5e7eb;
-  border-radius:99px;
-  overflow:hidden;
-  margin-bottom:4px
+.status-badge.not-marked {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
-.bar > div{
-  height:100%;
-  background:#4f46e5;
-  border-radius:99px
+.table-number {
+  font-weight: 600;
+  color: #334155;
 }
 
-/* -----------------------------
-   TEAM ATTENDANCE
------------------------------- */
+.balance-cell {
+  min-width: 145px;
+}
+
+.balance-cell > div {
+  margin-bottom: 7px;
+}
+
+.balance-cell > div:last-child {
+  margin-bottom: 0;
+}
+
+.balance-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.balance-line strong {
+  color: #334155;
+}
+
+.balance-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e8ebf0;
+}
+
+.balance-bar div {
+  height: 100%;
+  border-radius: 99px;
+  background: #6366f1;
+}
+
+.muted-text {
+  color: #9aa3b2;
+  font-size: 11px;
+}
+
+.view-button {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid #dce2ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #4f46e5;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
 
-.attendance-panel{
-  margin-top:20px
+.view-button:hover {
+  background: #eef2ff;
 }
 
-.attendance-panel .head{
-  margin-bottom:18px
+.empty-table {
+  padding: 35px !important;
+  color: #94a3b8 !important;
+  text-align: center !important;
 }
 
-.attendance-panel .head p{
-  margin:5px 0 0
+/* SELECTED DETAILS */
+
+.selected-detail {
+  margin-top: 20px;
+  padding: 20px;
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.primary-action,
+.close-action {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.primary-action {
+  border: 0;
+  background: #4f46e5;
+  color: #fff;
+}
+
+.primary-action:hover {
+  background: #4338ca;
+}
+
+.close-action {
+  border: 1px solid #dce2ec;
+  background: #fff;
+  color: #475569;
+}
+
+.detail-list {
+  border-top: 1px solid #edf0f4;
 }
 
-.attendance-stats{
-  display:grid;
-  grid-template-columns:repeat(
-    auto-fit,
-    minmax(140px, 1fr)
-  );
-  gap:12px;
-  margin-bottom:20px
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  padding: 13px 4px;
+  border-bottom: 1px solid #edf0f4;
+  cursor: pointer;
 }
 
-.attendance-stat{
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px 16px;
-  background:#fafbff
+.detail-row:hover {
+  background: #fafbff;
 }
 
-.attendance-label{
-  display:block;
-  color:var(--muted);
-  font-size:13px;
-  margin-bottom:6px
+.detail-row strong,
+.detail-row span {
+  display: block;
 }
 
-.attendance-number{
-  display:block;
-  font-size:26px;
-  font-weight:700
+.detail-row strong {
+  color: #334155;
+  font-size: 12px;
 }
 
-.attendance-number.present{
-  color:#16a34a
+.detail-row div span {
+  margin-top: 3px;
+  color: #8a94a6;
+  font-size: 11px;
 }
 
-.attendance-number.absent{
-  color:#dc2626
+
+/* OVERVIEW CARD LAYOUT REFINEMENT */
+.dashboard-card {
+  min-height: 240px;
+  padding: 18px;
+  overflow: hidden;
 }
 
-.attendance-number.half{
-  color:#d97706
+.card-heading {
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-.attendance-number.leave{
-  color:#7c3aed
+.card-heading h3 {
+  font-size: 15px;
 }
 
-.attendance-number.percentage{
-  color:#4f46e5
+.card-heading p {
+  max-width: 170px;
+  line-height: 1.35;
+  font-size: 11px;
 }
 
-.attendance-table-wrap{
-  overflow-x:auto
+.overview-content {
+  gap: 18px;
+  min-width: 0;
 }
 
-.attendance-table{
-  width:100%;
-  border-collapse:collapse
+.attendance-ring {
+  flex: 0 0 112px;
+  width: 112px;
+  height: 112px;
 }
 
-.attendance-table th,
-.attendance-table td{
-  text-align:left;
-  padding:12px 10px;
-  border-bottom:1px solid #f1f5f9;
-  font-size:14px
+.attendance-ring::before {
+  width: 82px;
+  height: 82px;
 }
 
-.attendance-table th{
-  color:var(--muted);
-  font-size:12px;
-  font-weight:600;
-  text-transform:uppercase;
-  letter-spacing:.03em;
-  background:#fafbff
+.legend-list {
+  min-width: 0;
 }
 
-.attendance-table tbody tr:hover{
-  background:#fafbff
+.legend-item {
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 6px 0;
+  font-size: 11px;
 }
 
-.attendance-badge{
-  display:inline-flex;
-  align-items:center;
-  padding:5px 10px;
-  border-radius:99px;
-  font-size:12px;
-  font-weight:600;
-  background:#f1f5f9;
-  color:#475569;
-  white-space:nowrap
+.timesheet-overview {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 150px;
 }
 
-.attendance-badge.present{
-  background:#dcfce7;
-  color:#166534
+.timesheet-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      #2563eb
+      calc(var(--completion, 0) * 1%),
+      #e8eef8 0
+    );
 }
 
-.attendance-badge.absent{
-  background:#fee2e2;
-  color:#991b1b
+.timesheet-ring::before {
+  content: "";
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #fff;
 }
 
-.attendance-badge.half-day{
-  background:#fef3c7;
-  color:#92400e
+.timesheet-status-list {
+  min-width: 0;
 }
 
-.attendance-badge.on-leave{
-  background:#ede9fe;
-  color:#6d28d9
+.timesheet-status-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 11px;
+  border-bottom: 1px solid #f0f2f5;
 }
 
-.attendance-badge.not-marked{
-  background:#f1f5f9;
-  color:#64748b
+.timesheet-status-list > div:last-child {
+  border-bottom: 0;
 }
 
-/* -----------------------------
-   TEAM TIMESHEETS
------------------------------- */
+.timesheet-status-list > div > span {
+  color: #64748b;
+}
 
-.timesheet-panel{
-  margin-top:20px
+.timesheet-status-list > div > strong {
+  flex: 0 0 auto;
+  font-size: 12px;
 }
 
-.timesheet-panel .head{
-  margin-bottom:18px
+.leave-overview {
+  min-height: 145px;
+  margin-bottom: 12px;
 }
 
-.timesheet-panel .head p{
-  margin:5px 0 0
+.leave-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.timesheet-stats{
-  display:grid;
-  grid-template-columns:repeat(
-    auto-fit,
-    minmax(150px, 1fr)
-  );
-  gap:12px;
-  margin-bottom:20px
+.leave-bar-row {
+  display: grid;
+  grid-template-columns: 62px minmax(90px, 1fr) 20px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
 }
 
-.timesheet-stat{
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px 16px;
-  background:#fafbff
+.leave-bar-track {
+  display: block;
+  width: 100%;
+  min-width: 90px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef1f5;
 }
 
-.timesheet-label{
-  display:block;
-  color:var(--muted);
-  font-size:13px;
-  margin-bottom:6px
+.leave-bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: 999px;
+  transition: width .2s ease;
 }
 
-.timesheet-number{
-  display:block;
-  font-size:26px;
-  font-weight:700
+.leave-bar-row > span {
+  color: #64748b;
 }
 
-.timesheet-table-wrap{
-  overflow-x:auto
+.leave-bar-row > strong {
+  text-align: right;
+  color: #172033;
+  font-size: 12px;
 }
 
-.timesheet-table{
-  width:100%;
-  border-collapse:collapse
+.purple-fill {
+  background: #8b5cf6;
 }
 
-.timesheet-table th,
-.timesheet-table td{
-  text-align:left;
-  padding:12px 10px;
-  border-bottom:1px solid #f1f5f9;
-  font-size:14px
+.amber-fill {
+  background: #f59e0b;
 }
 
-.timesheet-table th{
-  color:var(--muted);
-  font-size:12px;
-  font-weight:600;
-  text-transform:uppercase;
-  letter-spacing:.03em;
-  background:#fafbff
+.green-fill {
+  background: #22c55e;
 }
 
-.timesheet-table tbody tr:hover{
-  background:#fafbff
+.secondary-action {
+  height: 34px;
+  font-size: 11px;
 }
 
-@media (max-width:700px){
-  .attendance-stats,
-  .timesheet-stats{
-    grid-template-columns:repeat(2,1fr)
+@media (max-width: 1100px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .attendance-table th:nth-child(2),
-  .attendance-table td:nth-child(2){
-    display:none
+  .overview-grid {
+    grid-template-columns: 1fr;
   }
 }
 
-/* TEAM DASHBOARD FULL WIDTH */
-
-.team {
-  width: 100%;
-  max-width: none !important;
-  margin: 0 !important;
-  padding: 24px 28px;
-  box-sizing: border-box;
-}
-
-.team .stats {
-  width: 100%;
-}
-
-.team .panel {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-@media (max-width: 700px) {
-  .team {
+@media (max-width: 750px) {
+  .team-dashboard {
     padding: 16px;
   }
-}
 
+  .dashboard-header,
+  .members-header,
+  .table-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-date {
+    justify-content: flex-start;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .members-actions {
+    width: fit-content;
+  }
+
+  .search-box {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+  }
+
+  .toolbar-actions button {
+    flex: 1;
+  }
+
+  .overview-content {
+    gap: 18px;
+  }
+
+  .attendance-ring {
+    flex-basis: 105px;
+    width: 105px;
+    height: 105px;
+  }
+
+  .attendance-ring::before {
+    width: 77px;
+    height: 77px;
+  }
+
+  .ring-value strong {
+    font-size: 18px;
+  }
+}
 </style>

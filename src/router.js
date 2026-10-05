@@ -18,6 +18,7 @@ import EmployeeDetail from './views/EmployeeDetail.vue'
 
 import HRDashboard from './views/HR/HR.vue'
 import HRCorrectionRequests from './views/HR/HRCorrectionRequests.vue'
+import ManageMyTeam from './views/ManageMyTeam.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -79,7 +80,7 @@ const router = createRouter({
     // Manager routes
     {
       path: '/approvals',
-      component: Approvals,
+      redirect: '/team?tab=approvals',
       meta: {
         auth: true,
         approvalPage: true
@@ -88,7 +89,7 @@ const router = createRouter({
 
     {
       path: '/team',
-      component: Team,
+      component: ManageMyTeam,
       meta: {
         auth: true,
         manager: true

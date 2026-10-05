@@ -58,12 +58,7 @@ const managerLinks = computed(() =>
   manager.value
     ? [
         {
-          label: 'Approvals',
-          to: '/approvals',
-          icon: 'clipboard'
-        },
-        {
-          label: 'Team Dashboard',
+          label: 'Manage My Team',
           to: '/team',
           icon: 'users'
         }

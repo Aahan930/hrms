@@ -487,6 +487,37 @@ const pendingList = computed(() =>
   )
 )
 
+const monthlyLeaveTypes = computed(() => {
+  const month = viewDate.value.slice(0, 7)
+  const counts = {}
+
+  apps.value
+    .filter((l) => {
+      const start = l.from_date || ''
+      const end = l.to_date || start
+      return (
+        state(l) === 'Approved' &&
+        start.slice(0, 7) <= month &&
+        end.slice(0, 7) >= month
+      )
+    })
+    .forEach((l) => {
+      const type = l.leave_type || 'Other'
+      counts[type] = (counts[type] || 0) + Number(l.total_leave_days || 0)
+    })
+
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([type, days]) => ({
+      type,
+      days,
+      percentage: team.value.length
+        ? Math.min(100, Math.round((days / team.value.length) * 100))
+        : 0
+    }))
+})
+
 const detail = computed(() => {
   switch (selected.value) {
     case 'members':
@@ -636,31 +667,31 @@ const detail = computed(() => {
       <section class="overview-grid">
 
         <!-- ATTENDANCE -->
-        <div class="dashboard-card">
+        <div class="dashboard-card attendance-card">
           <div class="card-heading">
             <div>
               <h3>Attendance Overview</h3>
               <p>Team attendance for {{ viewDate }}</p>
             </div>
-
-            <span class="percentage-pill">
-              {{ attendancePercentage }}%
-            </span>
           </div>
 
           <div v-if="attendanceLoading" class="empty-state">
             Loading attendance...
           </div>
 
-          <div v-else class="overview-content">
-
+          <div v-else class="attendance-overview">
             <div
               class="attendance-ring"
-              :style="{ '--attendance': attendancePercentage }"
+              :style="{
+                '--present-pct': team.length ? (attendanceStats.present / team.length) * 100 : 0,
+                '--absent-pct': team.length ? (attendanceStats.absent / team.length) * 100 : 0,
+                '--leave-pct': team.length ? (attendanceStats.onLeave / team.length) * 100 : 0,
+                '--half-pct': team.length ? (attendanceStats.halfDay / team.length) * 100 : 0
+              }"
             >
               <div class="ring-value">
-                <strong>{{ attendancePercentage }}%</strong>
-                <span>Attendance</span>
+                <strong>{{ team.length }}</strong>
+                <span>Team Members</span>
               </div>
             </div>
 
@@ -669,27 +700,30 @@ const detail = computed(() => {
                 <span class="legend-dot present-dot"></span>
                 <span>Present</span>
                 <strong>{{ attendanceStats.present }}</strong>
+                <small>{{ team.length ? Math.round((attendanceStats.present / team.length) * 100) : 0 }}%</small>
               </div>
 
               <div class="legend-item">
                 <span class="legend-dot absent-dot"></span>
                 <span>Absent</span>
                 <strong>{{ attendanceStats.absent }}</strong>
+                <small>{{ team.length ? Math.round((attendanceStats.absent / team.length) * 100) : 0 }}%</small>
               </div>
 
               <div class="legend-item">
                 <span class="legend-dot leave-dot"></span>
                 <span>On Leave</span>
                 <strong>{{ attendanceStats.onLeave }}</strong>
+                <small>{{ team.length ? Math.round((attendanceStats.onLeave / team.length) * 100) : 0 }}%</small>
               </div>
 
               <div class="legend-item">
                 <span class="legend-dot half-dot"></span>
                 <span>Half Day</span>
                 <strong>{{ attendanceStats.halfDay }}</strong>
+                <small>{{ team.length ? Math.round((attendanceStats.halfDay / team.length) * 100) : 0 }}%</small>
               </div>
             </div>
-
           </div>
         </div>
 
@@ -700,10 +734,6 @@ const detail = computed(() => {
               <h3>Timesheet Overview</h3>
               <p>Timesheet activity across your team</p>
             </div>
-
-            <span class="overview-count">
-              {{ timesheetStats.total }}
-            </span>
           </div>
 
           <div v-if="timesheetLoading" class="empty-state">
@@ -711,26 +741,19 @@ const detail = computed(() => {
           </div>
 
           <div v-else class="timesheet-overview">
-
             <div
               class="timesheet-ring"
               :style="{
                 '--completion': timesheetStats.total
-                  ? Math.round(
-                      (timesheetStats.submitted / timesheetStats.total) * 100
-                    )
+                  ? Math.round((timesheetStats.submitted / timesheetStats.total) * 100)
                   : 0
               }"
             >
               <div class="ring-value">
                 <strong>
-                  {{
-                    timesheetStats.total
-                      ? Math.round(
-                          (timesheetStats.submitted / timesheetStats.total) * 100
-                        )
-                      : 0
-                  }}%
+                  {{ timesheetStats.total
+                    ? Math.round((timesheetStats.submitted / timesheetStats.total) * 100)
+                    : 0 }}%
                 </strong>
                 <span>Submitted</span>
               </div>
@@ -739,26 +762,19 @@ const detail = computed(() => {
             <div class="timesheet-status-list">
               <div>
                 <span>Submitted</span>
-                <strong class="status-green">
-                  {{ timesheetStats.submitted }}
-                </strong>
+                <strong class="status-green">{{ timesheetStats.submitted }}</strong>
               </div>
 
               <div>
                 <span>Pending</span>
-                <strong class="status-amber">
-                  {{ timesheetStats.draft }}
-                </strong>
+                <strong class="status-amber">{{ timesheetStats.draft }}</strong>
               </div>
 
               <div>
                 <span>Cancelled</span>
-                <strong class="status-red">
-                  {{ timesheetStats.cancelled }}
-                </strong>
+                <strong class="status-red">{{ timesheetStats.cancelled }}</strong>
               </div>
             </div>
-
           </div>
         </div>
 
@@ -767,82 +783,34 @@ const detail = computed(() => {
           <div class="card-heading">
             <div>
               <h3>Leave Overview</h3>
-              <p>Current team leave information</p>
+              <p>Approved leave by type</p>
             </div>
-
-            <span class="overview-count purple-count">
-              {{ onLeave.length }}
-            </span>
           </div>
 
           <div class="leave-overview">
-
-            <div class="leave-bars">
-
-              <div class="leave-bar-row">
-                <span>On Leave</span>
+            <div v-if="monthlyLeaveTypes.length" class="leave-bars">
+              <div
+                v-for="item in monthlyLeaveTypes"
+                :key="item.type"
+                class="leave-bar-row"
+              >
+                <span>{{ item.type }}</span>
 
                 <div class="leave-bar-track">
                   <div
                     class="leave-bar-fill purple-fill"
-                    :style="{
-                      width: team.length
-                        ? Math.min((onLeave.length / team.length) * 100, 100) + '%'
-                        : '0%'
-                    }"
+                    :style="{ width: item.percentage + '%' }"
                   ></div>
                 </div>
 
-                <strong>{{ onLeave.length }}</strong>
+                <strong>{{ item.days }}</strong>
               </div>
-
-              <div class="leave-bar-row">
-                <span>Pending</span>
-
-                <div class="leave-bar-track">
-                  <div
-                    class="leave-bar-fill amber-fill"
-                    :style="{
-                      width: team.length
-                        ? Math.min((pendingList.length / team.length) * 100, 100) + '%'
-                        : '0%'
-                    }"
-                  ></div>
-                </div>
-
-                <strong>{{ pendingList.length }}</strong>
-              </div>
-
-              <div class="leave-bar-row">
-                <span>Upcoming</span>
-
-                <div class="leave-bar-track">
-                  <div
-                    class="leave-bar-fill green-fill"
-                    :style="{
-                      width: team.length
-                        ? Math.min((upcoming.length / team.length) * 100, 100) + '%'
-                        : '0%'
-                    }"
-                  ></div>
-                </div>
-
-                <strong>{{ upcoming.length }}</strong>
-              </div>
-
             </div>
 
+            <div v-else class="empty-state">
+              No approved leave this month.
+            </div>
           </div>
-
-          <button
-            v-if="pendingList.length"
-            type="button"
-            class="secondary-action"
-            @click="router.push('/team?tab=approvals')"
-          >
-            Review pending approvals
-          </button>
-
         </div>
 
       </section>
@@ -1027,58 +995,6 @@ const detail = computed(() => {
 
       </section>
 
-      <!-- SELECTED DETAIL -->
-      <section
-        v-if="detail"
-        class="selected-detail"
-      >
-        <div class="detail-header">
-          <div>
-            <h3>{{ detail.title }}</h3>
-            <p>{{ detail.empty }}</p>
-          </div>
-
-          <div class="detail-actions">
-            <button
-              v-if="detail.approvals"
-              type="button"
-              class="primary-action"
-              @click="router.push('/team?tab=approvals')"
-            >
-              Open approvals
-            </button>
-
-            <button
-              type="button"
-              class="close-action"
-              @click="selected = null"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-
-        <div
-          v-if="detail.rows.length"
-          class="detail-list"
-        >
-          <div
-            v-for="row in detail.rows"
-            :key="row.key"
-            class="detail-row"
-            @click="open(row.emp)"
-          >
-            <div>
-              <strong>{{ row.title }}</strong>
-              <span>{{ row.sub }}</span>
-            </div>
-
-            <span class="status-badge">
-              {{ row.tag }}
-            </span>
-          </div>
-        </div>
-      </section>
 
     </template>
   </div>
@@ -1089,7 +1005,7 @@ const detail = computed(() => {
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
-  padding: 24px 28px 40px;
+  padding: 22px 28px 36px;
   box-sizing: border-box;
   color: #172033;
 }
@@ -1099,20 +1015,21 @@ const detail = computed(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .dashboard-header h2 {
   margin: 0;
-  font-size: 28px;
+  color: #172033;
+  font-size: 27px;
   line-height: 1.2;
   font-weight: 700;
 }
 
 .dashboard-header p {
-  margin: 7px 0 0;
+  margin: 6px 0 0;
   color: #718096;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .header-date {
@@ -1133,21 +1050,23 @@ const detail = computed(() => {
 }
 
 .header-date input {
-  height: 38px;
+  height: 36px;
   padding: 0 11px;
   border: 1px solid #dce2ec;
   border-radius: 8px;
   background: #fff;
   color: #374151;
+  font-size: 12px;
 }
 
 .header-date button {
-  height: 38px;
-  padding: 0 14px;
+  height: 36px;
+  padding: 0 13px;
   border: 1px solid #dce2ec;
   border-radius: 8px;
   background: #fff;
   color: #475569;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -1175,38 +1094,39 @@ const detail = computed(() => {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .summary-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-height: 118px;
-  padding: 20px;
+  gap: 13px;
+  min-height: 100px;
+  padding: 16px;
+  box-sizing: border-box;
   border: 1px solid #e6eaf0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 2px 7px rgba(15, 23, 42, .045);
   text-align: left;
   cursor: pointer;
   transition: transform .18s ease, box-shadow .18s ease;
 }
 
 .summary-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(15, 23, 42, .07);
 }
 
 .summary-icon {
   display: grid;
   place-items: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  font-size: 20px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  font-size: 18px;
   font-weight: 700;
 }
 
@@ -1241,21 +1161,21 @@ const detail = computed(() => {
 
 .summary-content span {
   color: #64748b;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .summary-content strong {
   display: block;
-  margin: 4px 0;
+  margin: 4px 0 3px;
   color: #172033;
-  font-size: 27px;
+  font-size: 26px;
   line-height: 1;
 }
 
 .summary-content small {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 /* OVERVIEW */
@@ -1263,30 +1183,38 @@ const detail = computed(() => {
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .dashboard-card,
 .team-members-card,
 .selected-detail {
   border: 1px solid #e6eaf0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 2px 7px rgba(15, 23, 42, .045);
 }
 
 .dashboard-card {
-  min-height: 260px;
-  padding: 20px;
+  min-width: 0;
+  height: 220px;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .card-heading {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
-  gap: 15px;
-  margin-bottom: 20px;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  margin-bottom: 6px;
+}
+
+.card-heading > div:first-child {
+  min-width: 0;
 }
 
 .card-heading h3,
@@ -1295,15 +1223,17 @@ const detail = computed(() => {
   margin: 0;
   color: #172033;
   font-size: 16px;
+  line-height: 1.25;
   font-weight: 700;
 }
 
 .card-heading p,
 .members-header p,
 .detail-header p {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: #8a94a6;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .percentage-pill,
@@ -1311,13 +1241,13 @@ const detail = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  height: 32px;
-  padding: 0 9px;
-  border-radius: 8px;
+  min-width: 42px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
   background: #eef2ff;
   color: #4f46e5;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1326,107 +1256,209 @@ const detail = computed(() => {
   color: #7c3aed;
 }
 
-.overview-content {
-  display: flex;
-  align-items: center;
-  gap: 28px;
+/* ATTENDANCE */
+
+.attendance-card {
+  display: grid !important;
+  grid-template-rows: auto 1fr !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  align-self: stretch !important;
 }
 
-.attendance-ring {
+.attendance-card .attendance-overview {
+  display: grid !important;
+  grid-template-columns: 96px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 12px;
+  width: 100%;
+  height: 130px;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.attendance-card .attendance-ring {
   position: relative;
   display: grid;
   place-items: center;
-  flex: 0 0 128px;
-  width: 128px;
-  height: 128px;
+  width: 104px !important;
+  height: 104px !important;
+  margin: 0;
   border-radius: 50%;
   background:
     conic-gradient(
-      #4f46e5
-      calc(var(--attendance, 0) * 1%),
-      #eef2f7 0
+      #22c55e 0 calc(var(--present-pct) * 1%),
+      #ef4444 0 calc(
+        (var(--present-pct) + var(--absent-pct)) * 1%
+      ),
+      #8b5cf6 0 calc(
+        (var(--present-pct) + var(--absent-pct) + var(--leave-pct)) * 1%
+      ),
+      #f59e0b 0 calc(
+        (var(--present-pct) + var(--absent-pct) + var(--leave-pct) + var(--half-pct)) * 1%
+      ),
+      #e5e7eb 0 100%
     );
 }
 
-.attendance-ring::before {
+.attendance-card .attendance-ring::before {
   content: "";
   position: absolute;
-  width: 94px;
-  height: 94px;
+  inset: 13px;
   border-radius: 50%;
   background: #fff;
 }
 
-.ring-value {
+.attendance-card .ring-value {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.attendance-card .ring-value strong {
+  color: #172033;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.attendance-card .ring-value span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.attendance-card .legend-list {
+  display: flex !important;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  padding: 0 !important;
+}
+
+.attendance-card .legend-item {
+  display: grid !important;
+  grid-template-columns: 8px minmax(0, 1fr) 20px 30px !important;
+  align-items: center !important;
+  min-width: 0;
+  min-height: 25px;
+  padding: 0 !important;
+  column-gap: 5px;
+}
+
+.attendance-card .legend-item > span:nth-child(2) {
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.attendance-card .legend-item strong {
+  color: #172033;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.attendance-card .legend-item small {
+  color: #64748b;
+  font-size: 9px;
+  text-align: right;
+}
+
+/* TIMESHEET */
+
+.timesheet-overview {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 130px;
+}
+
+.timesheet-ring {
   position: relative;
-  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      #2563eb calc(var(--completion, 0) * 1%),
+      #e8eef8 0
+    );
+}
+
+.timesheet-ring::before {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.timesheet-ring .ring-value {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: auto;
   text-align: center;
 }
 
-.ring-value strong {
+.timesheet-ring .ring-value strong {
   display: block;
-  color: #172033;
-  font-size: 22px;
+  margin: 0;
+  font-size: 18px;
+  line-height: 1;
 }
 
-.ring-value span {
-  color: #8a94a6;
-  font-size: 10px;
-}
-
-.legend-list {
-  flex: 1;
-}
-
-.legend-item {
-  display: grid;
-  grid-template-columns: 10px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 0;
+.timesheet-ring .ring-value span {
+  display: block;
+  margin-top: 4px;
   color: #64748b;
-  font-size: 12px;
-}
-
-.legend-item strong {
-  color: #172033;
-  font-size: 12px;
-}
-
-.legend-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.present-dot {
-  background: #22c55e;
-}
-
-.absent-dot {
-  background: #ef4444;
-}
-
-.leave-dot {
-  background: #8b5cf6;
-}
-
-.half-dot {
-  background: #f59e0b;
-}
-
-.timesheet-overview {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  min-height: 160px;
+  font-size: 8px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .timesheet-status-list {
-  flex: 1;
+  width: 100%;
+  min-width: 0;
 }
 
-.timesheet-status-list > div,
+.timesheet-status-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 29px;
+  padding: 4px 0;
+  border-bottom: 1px solid #f0f2f6;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.timesheet-status-list > div:last-child {
+  border-bottom: 0;
+}
+
+.timesheet-status-list > div strong {
+  min-width: 20px;
+  text-align: right;
+  font-size: 11px;
+}
+
 .status-green {
   color: #16a34a !important;
 }
@@ -1439,64 +1471,129 @@ const detail = computed(() => {
   color: #dc2626 !important;
 }
 
+/* LEAVE */
+
 .leave-overview {
-  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  min-height: 130px;
+  margin: 0;
 }
 
-.secondary-action {
+.leave-bars {
   width: 100%;
-  height: 36px;
-  border: 1px solid #d9dded;
-  border-radius: 7px;
-  background: #f8f9ff;
-  color: #4f46e5;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.secondary-action:hover {
-  background: #eef2ff;
+.leave-bar-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.leave-bar-row > span {
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.leave-bar-row > strong {
+  color: #172033;
+  font-size: 11px;
+  text-align: right;
+}
+
+.leave-bar-track {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f4;
+}
+
+.leave-bar-fill {
+  height: 100%;
+  min-width: 0;
+  border-radius: 999px;
+  transition: width .2s ease;
+}
+
+.purple-fill {
+  background: #8b5cf6;
+}
+
+.amber-fill {
+  background: #f59e0b;
+}
+
+.green-fill {
+  background: #22c55e;
 }
 
 .empty-state {
   display: grid;
   place-items: center;
-  min-height: 170px;
+  min-height: 130px;
   color: #94a3b8;
-  font-size: 13px;
+  font-size: 11px;
+  text-align: center;
 }
 
 /* TEAM MEMBERS */
 
 .team-members-card {
-  padding: 20px;
+  padding: 18px;
+  box-sizing: border-box;
 }
 
 .members-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 18px;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.members-header > div:first-child {
+  min-width: 0;
+}
+
+.members-header h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.members-header p {
+  margin: 5px 0 0;
+  color: #8a94a6;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .members-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   padding: 3px;
   border-radius: 8px;
   background: #f1f3f7;
+  flex-shrink: 0;
 }
 
 .members-actions button {
-  height: 32px;
+  height: 30px;
   padding: 0 12px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1508,58 +1605,73 @@ const detail = computed(() => {
   box-shadow: 0 1px 4px rgba(15, 23, 42, .08);
 }
 
+/* SEARCH / FILTER */
+
 .table-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .search-box {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 320px;
-  height: 38px;
-  padding: 0 11px;
+  width: 275px;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
   border: 1px solid #dfe4ec;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #fff;
 }
 
 .search-box span {
   color: #94a3b8;
-  font-size: 18px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .search-box input {
   width: 100%;
+  min-width: 0;
+  padding: 0;
   border: 0;
   outline: 0;
+  background: transparent;
   color: #334155;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.search-box input::placeholder {
+  color: #9aa3b2;
 }
 
 .toolbar-actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
 }
 
 .toolbar-actions button {
-  height: 38px;
-  padding: 0 14px;
+  height: 34px;
+  padding: 0 13px;
   border: 1px solid #dfe4ec;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #fff;
   color: #475569;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .toolbar-actions button:hover {
   background: #f8fafc;
 }
+
+/* TABLE */
 
 .table-container {
   width: 100%;
@@ -1569,11 +1681,12 @@ const detail = computed(() => {
 .members-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .members-table th,
 .members-table td {
-  padding: 13px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid #edf0f4;
   text-align: left;
   vertical-align: middle;
@@ -1582,37 +1695,66 @@ const detail = computed(() => {
 .members-table th {
   background: #fafbfc;
   color: #7b8494;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
 }
 
 .members-table td {
+  height: 58px;
   color: #475569;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.members-table th:nth-child(1),
+.members-table td:nth-child(1) {
+  width: 29%;
+}
+
+.members-table th:nth-child(2),
+.members-table td:nth-child(2) {
+  width: 15%;
+}
+
+.members-table th:nth-child(3),
+.members-table td:nth-child(3) {
+  width: 13%;
+}
+
+.members-table th:nth-child(4),
+.members-table td:nth-child(4) {
+  width: 30%;
+}
+
+.members-table th:nth-child(5),
+.members-table td:nth-child(5) {
+  width: 13%;
 }
 
 .members-table tbody tr:hover {
   background: #fafbff;
 }
 
+/* EMPLOYEE */
+
 .employee-cell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
+  min-width: 0;
 }
 
 .employee-avatar {
   display: grid;
   place-items: center;
-  flex: 0 0 34px;
-  width: 34px;
-  height: 34px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #eef2ff;
   color: #4f46e5;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1622,14 +1764,18 @@ const detail = computed(() => {
 
 .employee-name {
   display: block;
+  max-width: 100%;
   padding: 0;
+  overflow: hidden;
   border: 0;
   background: transparent;
   color: #334155;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  cursor: pointer;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .employee-name:hover {
@@ -1638,19 +1784,21 @@ const detail = computed(() => {
 
 .employee-cell span {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: #9aa3b2;
-  font-size: 10px;
+  font-size: 9px;
 }
+
+/* STATUS */
 
 .status-badge {
   display: inline-flex;
   align-items: center;
-  padding: 5px 9px;
+  padding: 4px 8px;
   border-radius: 99px;
   background: #eef2f7;
   color: #64748b;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1684,16 +1832,18 @@ const detail = computed(() => {
 }
 
 .table-number {
-  font-weight: 600;
   color: #334155;
+  font-weight: 600;
 }
 
+/* LEAVE BALANCE */
+
 .balance-cell {
-  min-width: 145px;
+  min-width: 0;
 }
 
 .balance-cell > div {
-  margin-bottom: 7px;
+  margin-bottom: 6px;
 }
 
 .balance-cell > div:last-child {
@@ -1702,19 +1852,22 @@ const detail = computed(() => {
 
 .balance-line {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   color: #64748b;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .balance-line strong {
   color: #334155;
+  font-weight: 600;
 }
 
 .balance-bar {
-  height: 5px;
+  width: 100%;
+  height: 4px;
   overflow: hidden;
   border-radius: 99px;
   background: #e8ebf0;
@@ -1728,17 +1881,19 @@ const detail = computed(() => {
 
 .muted-text {
   color: #9aa3b2;
-  font-size: 11px;
+  font-size: 10px;
 }
 
+/* ACTION */
+
 .view-button {
-  height: 30px;
-  padding: 0 11px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid #dce2ec;
   border-radius: 6px;
   background: #fff;
   color: #4f46e5;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1748,7 +1903,7 @@ const detail = computed(() => {
 }
 
 .empty-table {
-  padding: 35px !important;
+  padding: 30px !important;
   color: #94a3b8 !important;
   text-align: center !important;
 }
@@ -1834,242 +1989,6 @@ const detail = computed(() => {
 }
 
 
-/* OVERVIEW CARD LAYOUT REFINEMENT */
-.dashboard-card {
-  min-height: 240px;
-  padding: 18px;
-  overflow: hidden;
-}
 
-.card-heading {
-  gap: 10px;
-  margin-bottom: 14px;
-}
 
-.card-heading h3 {
-  font-size: 15px;
-}
-
-.card-heading p {
-  max-width: 170px;
-  line-height: 1.35;
-  font-size: 11px;
-}
-
-.overview-content {
-  gap: 18px;
-  min-width: 0;
-}
-
-.attendance-ring {
-  flex: 0 0 112px;
-  width: 112px;
-  height: 112px;
-}
-
-.attendance-ring::before {
-  width: 82px;
-  height: 82px;
-}
-
-.legend-list {
-  min-width: 0;
-}
-
-.legend-item {
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  gap: 6px;
-  padding: 6px 0;
-  font-size: 11px;
-}
-
-.timesheet-overview {
-  display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
-  min-height: 150px;
-}
-
-.timesheet-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 108px;
-  height: 108px;
-  border-radius: 50%;
-  background:
-    conic-gradient(
-      #2563eb
-      calc(var(--completion, 0) * 1%),
-      #e8eef8 0
-    );
-}
-
-.timesheet-ring::before {
-  content: "";
-  position: absolute;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.timesheet-status-list {
-  min-width: 0;
-}
-
-.timesheet-status-list > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 0;
-  font-size: 11px;
-  border-bottom: 1px solid #f0f2f5;
-}
-
-.timesheet-status-list > div:last-child {
-  border-bottom: 0;
-}
-
-.timesheet-status-list > div > span {
-  color: #64748b;
-}
-
-.timesheet-status-list > div > strong {
-  flex: 0 0 auto;
-  font-size: 12px;
-}
-
-.leave-overview {
-  min-height: 145px;
-  margin-bottom: 12px;
-}
-
-.leave-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.leave-bar-row {
-  display: grid;
-  grid-template-columns: 62px minmax(90px, 1fr) 20px;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.leave-bar-track {
-  display: block;
-  width: 100%;
-  min-width: 90px;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #eef1f5;
-}
-
-.leave-bar-fill {
-  display: block;
-  height: 100%;
-  min-width: 0;
-  border-radius: 999px;
-  transition: width .2s ease;
-}
-
-.leave-bar-row > span {
-  color: #64748b;
-}
-
-.leave-bar-row > strong {
-  text-align: right;
-  color: #172033;
-  font-size: 12px;
-}
-
-.purple-fill {
-  background: #8b5cf6;
-}
-
-.amber-fill {
-  background: #f59e0b;
-}
-
-.green-fill {
-  background: #22c55e;
-}
-
-.secondary-action {
-  height: 34px;
-  font-size: 11px;
-}
-
-@media (max-width: 1100px) {
-  .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .overview-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 750px) {
-  .team-dashboard {
-    padding: 16px;
-  }
-
-  .dashboard-header,
-  .members-header,
-  .table-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-date {
-    justify-content: flex-start;
-  }
-
-  .summary-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .members-actions {
-    width: fit-content;
-  }
-
-  .search-box {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-  }
-
-  .toolbar-actions button {
-    flex: 1;
-  }
-
-  .overview-content {
-    gap: 18px;
-  }
-
-  .attendance-ring {
-    flex-basis: 105px;
-    width: 105px;
-    height: 105px;
-  }
-
-  .attendance-ring::before {
-    width: 77px;
-    height: 77px;
-  }
-
-  .ring-value strong {
-    font-size: 18px;
-  }
-}
 </style>

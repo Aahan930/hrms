@@ -21,7 +21,10 @@ function selectTab(tab) {
 </script>
 
 <template>
-  <div class="manage-team-page">
+  <div
+    class="manage-team-page"
+    style="padding: 24px 32px; box-sizing: border-box; width: 100%;"
+  >
     <div class="page-heading">
       <h2>Manage My Team</h2>
       <p>Manage team approvals and view your team's activity.</p>
@@ -55,10 +58,13 @@ function selectTab(tab) {
 <style scoped>
 .manage-team-page {
   width: 100%;
+  box-sizing: border-box;
+  text-align: left;
 }
 
 .page-heading {
   margin-bottom: 18px;
+  text-align: left;
 }
 
 .page-heading h2 {
@@ -98,17 +104,74 @@ function selectTab(tab) {
 }
 
 .team-tabs button:hover {
-  color: #343d55;
+  color: #4338ca;
+  background: #e4e7ff;
 }
 
 .team-tabs button.active {
-  background: #ffffff;
-  color: #4338ca;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  background: #4f46e5;
+  color: #ffffff;
+  box-shadow: none;
 }
 
 .team-tab-content {
   width: 100%;
+}
+
+/* ===== Child dashboard: strip padding and neutralise leaking global CSS ===== */
+.team-tab-content :deep(.team-dashboard) {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+}
+
+.team-tab-content :deep(.team-dashboard),
+.team-tab-content :deep(.team-dashboard *) {
+  text-align: left;
+}
+
+.team-tab-content :deep(.team-dashboard .hole),
+.team-tab-content :deep(.team-dashboard .empty-state),
+.team-tab-content :deep(.team-dashboard .empty-table),
+.team-tab-content :deep(.team-dashboard .leave-col) {
+  text-align: center;
+}
+
+/* header: title left, date controls on one row at natural width */
+.team-tab-content :deep(.team-dashboard .dashboard-header) {
+  flex-wrap: nowrap;
+}
+
+.team-tab-content :deep(.team-dashboard .dashboard-header > div:first-child) {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-tab-content :deep(.team-dashboard .header-date) {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.team-tab-content :deep(.team-dashboard .header-date input) {
+  width: 140px;
+  flex: 0 0 auto;
+}
+
+.team-tab-content :deep(.team-dashboard .header-date button),
+.team-tab-content :deep(.team-dashboard .range-pill) {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.team-tab-content :deep(.team-dashboard .oc-head),
+.team-tab-content :deep(.team-dashboard .oc-body) {
+  width: 100%;
+}
+
+.team-tab-content :deep(.team-dashboard .search-box input) {
+  width: 100%;
+  max-width: none;
 }
 
 @media (max-width: 600px) {
@@ -119,6 +182,12 @@ function selectTab(tab) {
   .team-tabs button {
     flex: 1;
     min-width: 0;
+  }
+}
+
+@media (max-width: 750px) {
+  .team-tab-content :deep(.team-dashboard .dashboard-header) {
+    flex-wrap: wrap;
   }
 }
 </style>

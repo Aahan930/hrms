@@ -28,13 +28,20 @@ const page = ref(1)
 const pageSize = 8
 
 function getStatus(item) {
-  return item.workflow_state ||
+  const status =
+    item.workflow_state ||
     item.status ||
     (item.docstatus === 2
       ? 'Cancelled'
       : item.docstatus === 1
         ? 'Submitted'
         : 'Draft')
+
+  if (status === 'Approved') {
+    return 'Submitted'
+  }
+
+  return status
 }
 
 function statusClass(item) {

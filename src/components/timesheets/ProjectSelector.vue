@@ -6,6 +6,10 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: ''
+  },
+  showCreate: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -179,6 +183,7 @@ onMounted(() => {
     </select>
 
     <button
+      v-if="showCreate"
       type="button"
       class="create-project-btn"
       @click="openCreateModal"

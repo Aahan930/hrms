@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import api, { errMsg, isManager } from '../../api'
 import TimesheetEntry from './TimesheetEntry.vue'
+import TimesheetDailyEntries from './TimesheetDailyEntries.vue'
 
 const props = defineProps({
   form: {
@@ -17,6 +18,18 @@ const props = defineProps({
     default: 'create'
   },
   initialEntries: {
+    type: Array,
+    default: () => []
+  },
+  employeeName: {
+    type: String,
+    default: ''
+  },
+  department: {
+    type: String,
+    default: ''
+  },
+  submittedDates: {
     type: Array,
     default: () => []
   }
@@ -42,9 +55,10 @@ const activityCreateError = ref('')
 const validationError = ref('')
 const attemptedSubmit = ref(false)
 
-function emptyEntry() {
+function emptyEntry(date = '') {
   return {
     name: null,
+    date,
     activity_type: '',
     project: '',
     deliverables: '',
@@ -54,8 +68,15 @@ function emptyEntry() {
 }
 
 function normalizeEntry(entry) {
+  let date = entry.date || ''
+
+  if (!date && entry.from_time) {
+    date = String(entry.from_time).slice(0, 10)
+  }
+
   return {
     name: entry.name || null,
+    date,
     activity_type: entry.activity_type || '',
     project: entry.project || '',
     deliverables: entry.deliverables || '',
@@ -65,17 +86,40 @@ function normalizeEntry(entry) {
 }
 const entries = ref([emptyEntry()])
 
+function hasEntryData(entry) {
+  return Boolean(
+    entry.activity_type ||
+    entry.project ||
+    entry.deliverables ||
+    entry.description ||
+    (Number(entry.hours) || 0) > 0
+  )
+}
+
 watch(
   [
     () => props.mode,
-    () => props.initialEntries
+    () => props.initialEntries,
+    () => props.form?.start_date,
+    () => props.submittedDates
   ],
   () => {
-    entries.value =
+    if (
       props.mode === 'edit' &&
       props.initialEntries.length
-        ? props.initialEntries.map(normalizeEntry)
-        : [emptyEntry()]
+    ) {
+      entries.value =
+        props.initialEntries.map(normalizeEntry)
+    } else {
+      const postingDate =
+        props.form?.start_date || ''
+
+      entries.value =
+        postingDate &&
+        !props.submittedDates.includes(postingDate)
+          ? [emptyEntry(postingDate)]
+          : [emptyEntry('')]
+    }
 
     validationError.value = ''
     attemptedSubmit.value = false
@@ -124,8 +168,26 @@ function updateEntry(index, field, value) {
     validateEntries()
   }
 }
-function addEntry() {
-  entries.value.push(emptyEntry())
+
+function addEntry(date = '') {
+  const rowDate =
+    date ||
+    props.form?.start_date ||
+    ''
+
+  if (!rowDate) {
+    validationError.value =
+      'Please select a Posting Date first.'
+    return
+  }
+
+  if (props.submittedDates.includes(rowDate)) {
+    validationError.value =
+      'This date has already been submitted and cannot be added again.'
+    return
+  }
+
+  entries.value.push(emptyEntry(rowDate))
   validationError.value = ''
 }
 
@@ -142,14 +204,16 @@ function removeEntry(index) {
 function validateEntries() {
   validationError.value = ''
 
-  if (!entries.value.length) {
+  const activeEntries = entries.value.filter(hasEntryData)
+
+  if (!activeEntries.length) {
     validationError.value =
       'Add at least one work entry.'
     return false
   }
 
-  for (let index = 0; index < entries.value.length; index++) {
-    const entry = entries.value[index]
+  for (let index = 0; index < activeEntries.length; index++) {
+    const entry = activeEntries[index]
     const number = index + 1
 
     if (!entry.activity_type) {
@@ -242,7 +306,29 @@ async function createActivityType() {
   }
 }
 
-function submit() {
+function updatePostingDate(date) {
+  if (
+    date &&
+    props.submittedDates.includes(date)
+  ) {
+    validationError.value =
+      'This date has already been submitted. Please choose another date.'
+    return
+  }
+
+  emit(
+    'update:form',
+    {
+      ...props.form,
+      start_date: date,
+      end_date: date
+    }
+  )
+
+  validationError.value = ''
+}
+
+function submit(action = 'draft') {
   if (props.saving) return
 
   attemptedSubmit.value = true
@@ -251,7 +337,10 @@ function submit() {
 
   emit(
     'submit',
-    entries.value.map(normalizeEntry)
+    entries.value
+      .filter(hasEntryData)
+      .map(normalizeEntry),
+    action
   )
 }
 
@@ -293,43 +382,54 @@ onMounted(loadActivityTypes)
 
         <h2>
           {{ mode === 'edit'
-            ? 'Edit timesheet'
-            : 'New Timesheet'
+            ? 'Edit Timesheet'
+            : 'Create Timesheet'
           }}
         </h2>
 
         <p>
           {{ mode === 'edit'
             ? 'Review and update your recorded work activities.'
-            : 'Record your daily activities and track your work hours.'
+            : 'Create and submit your daily timesheet.'
           }}
         </p>
       </div>
 
     </header>
 
-    <div class="posting-date-section">
-      <label for="timesheet-posting-date">
-        Posting Date
-      </label>
+    <section class="posting-date-section">
 
-      <input
-        id="timesheet-posting-date"
-        type="date"
-        :value="form.start_date"
-        :disabled="saving"
-        @input="
-          emit(
-            'update:form',
-            {
-              ...form,
-              start_date: $event.target.value,
-              end_date: $event.target.value
-            }
-          )
-        "
-      />
-    </div>
+      <div class="week-period-block">
+        <label>Posting Date</label>
+
+        <div class="week-period-fields">
+          <span class="week-period-calendar" aria-hidden="true">📅</span>
+
+          <input
+            type="date"
+            :value="form.start_date"
+            :disabled="saving"
+            aria-label="Posting Date"
+            @input="updatePostingDate($event.target.value)"
+          />
+        </div>
+      </div>
+
+      <div class="employee-info-field">
+        <label>Employee</label>
+        <div class="employee-info-value">
+          {{ employeeName || '—' }}
+        </div>
+      </div>
+
+      <div class="employee-info-field">
+        <label>Department</label>
+        <div class="employee-info-value">
+          {{ department || '—' }}
+        </div>
+      </div>
+
+    </section>
 
     <!-- Summary -->
     <div class="summary-grid">
@@ -375,95 +475,67 @@ onMounted(loadActivityTypes)
 
     </div>
 
-    <!-- Time Sheets heading -->
-    <div class="section-heading">
-      <div>
-        <h3>Time Sheets</h3>
+    <!-- Daily Entries -->
+    <section class="daily-entries-card">
+      <div class="section-heading">
+        <div>
+          <h3>Time Sheets</h3>
 
-        <p>
-          Add an entry for every activity completed
-          during your workday.
-        </p>
-      </div>
-
-      <span class="entry-count">
-        {{ entryCount }}
-        {{ entryCount === 1 ? 'entry' : 'entries' }}
-      </span>
-    </div>
-
-    <!-- Work entry cards -->
-    <div class="entries-list">
-
-      <section
-        v-for="(entry, index) in entries"
-        :key="entry.name || index"
-        class="entry-card"
-      >
-
-        <div class="entry-body">
-
-          <TimesheetEntry
-            :entry="entry"
-            :index="index"
-            :entries-count="entries.length"
-            :activity-types="activityTypes"
-            :activity-loading="activityLoading"
-            :manager-view="managerView"
-            :activity-error="activityError"
-            @update="
-              (field, value) =>
-                updateEntry(index, field, value)
-            "
-            @remove="removeEntry(index)"
-            @create-activity="showActivityModal = true"
-          />
-
+          <p>
+            Add an entry for every activity completed
+            during your workday.
+          </p>
         </div>
 
-      </section>
-
-    </div>
-
-    <button
-      type="button"
-      class="add-entry-button"
-      :disabled="saving"
-      @click="addEntry"
-    >
-      <span class="add-icon">+</span>
-      Add Row
-    </button>
-
-    <!-- Validation -->
-    <div
-      v-if="validationError"
-      class="validation-message"
-      role="alert"
-    >
-      <span class="validation-icon">!</span>
-
-      <div>
-        <strong>Please review your entries</strong>
-        <p>{{ validationError }}</p>
+        <span class="entry-count">
+          {{ entryCount }}
+          {{ entryCount === 1 ? 'entry' : 'entries' }}
+        </span>
       </div>
-    </div>
 
-    <!-- Footer -->
+      <TimesheetDailyEntries
+        :entries="entries"
+        :start-date="form.start_date"
+        :end-date="form.end_date"
+        :saving="saving"
+        :activity-types="activityTypes"
+        :activity-loading="activityLoading"
+        :manager-view="managerView"
+        :activity-error="activityError"
+        @update-entry="updateEntry"
+        @remove-entry="removeEntry"
+        @add-entry="addEntry"
+        @create-activity="showActivityModal = true"
+      />
+    </section>
+
     <footer class="form-footer">
-
-      <div class="footer-summary">
-        <span>TOTAL WORKING HOURS</span>
-        <strong>{{ formattedTotal }}</strong>
-      </div>
-
       <div class="form-actions">
+
+        <button
+          type="button"
+          class="button button-secondary"
+          :disabled="saving"
+          @click="emit('cancel')"
+        >
+          Discard
+        </button>
+
+        <button
+          v-if="mode !== 'edit'"
+          type="button"
+          class="button button-draft"
+          :disabled="saving"
+          @click="submit('draft')"
+        >
+          Save as Draft
+        </button>
 
         <button
           type="button"
           class="button button-primary"
           :disabled="saving"
-          @click="submit"
+          @click="submit('submit')"
         >
           <span
             v-if="saving"
@@ -472,17 +544,14 @@ onMounted(loadActivityTypes)
 
           {{
             saving
-              ? 'Saving timesheet...'
+              ? 'Submitting...'
               : mode === 'edit'
                 ? 'Save changes'
-                : 'Save timesheet'
+                : 'Submit Timesheet'
           }}
-
-          <span v-if="!saving">→</span>
         </button>
 
       </div>
-
     </footer>
 
   </section>
@@ -756,6 +825,80 @@ onMounted(loadActivityTypes)
 
   font: inherit;
   font-size: 12px;
+}
+
+
+.posting-date-section {
+  display: grid;
+  grid-template-columns: 1.15fr 1.5fr 1.5fr;
+  align-items: end;
+  gap: 14px;
+}
+
+.week-period-block {
+  min-width: 0;
+}
+
+/* WEEK PERIOD */
+.week-period-fields {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 9px;
+  box-sizing: border-box;
+
+  border: 1px solid #d9e0ea;
+  border-radius: 5px;
+
+  background: #ffffff;
+}
+
+.week-period-calendar {
+  flex: 0 0 auto;
+  margin-right: 7px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.week-period-fields input {
+  flex: 1 1 0;
+  width: 100% !important;
+  min-width: 0;
+  height: 100%;
+
+  padding: 0 !important;
+
+  border: 0 !important;
+  border-radius: 0;
+
+  background: transparent !important;
+  color: #303846;
+
+  font: inherit;
+  font-size: 11px;
+
+  box-sizing: border-box;
+}
+
+.week-period-fields input:focus {
+  outline: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.week-period-fields input::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  cursor: pointer;
+}
+
+.week-period-separator {
+  flex: 0 0 auto;
+  padding: 0 8px;
+
+  color: #7a8799;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .posting-date-section input:focus {
@@ -2085,6 +2228,44 @@ onMounted(loadActivityTypes)
   font-weight: 700;
 }
 
+
+.entries-table-header {
+  display: grid;
+  grid-template-columns:
+    82px
+    minmax(145px, 1fr)
+    minmax(165px, 1.1fr)
+    minmax(155px, 1fr)
+    minmax(205px, 1.35fr)
+    82px
+    42px;
+
+  align-items: center;
+
+  min-height: 34px;
+  padding: 0;
+
+  border-top: 1px solid #e6eaf0;
+  border-bottom: 1px solid #e6eaf0;
+
+  background: #f8fafc;
+  color: #768293;
+
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+
+.entries-table-header > div {
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.entries-table-header > div:not(:last-child) {
+  border-right: 1px solid #e6eaf0;
+}
+
 /* Add Row */
 
 .timesheet-form .add-entry-button {
@@ -2680,6 +2861,230 @@ onMounted(loadActivityTypes)
   background: rgba(255,255,255,.15) !important;
   border-color: rgba(255,255,255,.34) !important;
   color: #ffffff !important;
+}
+
+
+.timesheet-add-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 0 4px;
+}
+
+.add-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #8eb1ef;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #2874e8;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.add-row-btn:hover {
+  background: #f4f8ff;
+  border-color: #2874e8;
+}
+
+.add-row-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.add-row-btn span {
+  font-size: 15px;
+  line-height: 1;
+}
+
+
+/* EMPLOYEE / DEPARTMENT INFO */
+.employee-info-field {
+  min-width: 0;
+}
+
+.employee-info-field label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #68758a;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.employee-info-value {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #d9e0ea;
+  border-radius: 5px;
+  background: #f8fafc;
+  color: #24324a;
+  font-size: 11px;
+  font-weight: 600;
+  box-sizing: border-box;
+}
+
+@media (max-width: 700px) {
+  .posting-date-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* ADDITIONAL INFORMATION */
+.additional-information-section {
+  margin: 0 24px 18px;
+  padding: 14px 16px;
+  border: 1px solid #e4e8ed;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.additional-information-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.additional-information-header h3 {
+  margin: 0;
+  color: #26364d;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.additional-information-header span {
+  color: #8a94a3;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.additional-information-section textarea {
+  display: block;
+  width: 100%;
+  min-height: 68px;
+  padding: 9px 10px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #d9e0ea;
+  border-radius: 5px;
+  background: #fafbfc;
+  color: #26364d;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.additional-information-section textarea:focus {
+  border-color: #8eb1ef;
+  background: #fff;
+}
+
+.additional-information-section textarea::placeholder {
+  color: #9aa4b2;
+}
+
+@media (max-width: 760px) {
+  .additional-information-section {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+}
+
+
+/* TIMESHEET FOOTER ACTIONS */
+.timesheet-form .form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.timesheet-form .button-secondary,
+.timesheet-form .button-draft,
+.timesheet-form .button-primary {
+  min-height: 32px;
+  padding: 0 13px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.timesheet-form .button-secondary {
+  border: 1px solid #d6dce5;
+  background: #fff;
+  color: #5f6b7a;
+}
+
+.timesheet-form .button-secondary:hover {
+  background: #f7f8fa;
+}
+
+.timesheet-form .button-draft {
+  border: 1px solid #8eb1ef;
+  background: #fff;
+  color: #2874e8;
+}
+
+.timesheet-form .button-draft:hover {
+  background: #f4f8ff;
+}
+
+.timesheet-form .button-primary {
+  border: 1px solid #2874e8;
+  background: #2874e8;
+  color: #fff;
+}
+
+.timesheet-form .button-primary:hover {
+  background: #2167d1;
+}
+
+.timesheet-form .button-secondary:disabled,
+.timesheet-form .button-draft:disabled,
+.timesheet-form .button-primary:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .timesheet-form .form-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+
+/* DAILY ENTRIES - GROUPED CARD */
+.daily-entries-card {
+  width: 100%;
+  margin: 0;
+  border: 1px solid #e1e6ed;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.daily-entries-card .section-heading {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid #e7ebf0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.daily-entries-card :deep(.daily-entries) {
+  width: 100%;
 }
 
 </style>

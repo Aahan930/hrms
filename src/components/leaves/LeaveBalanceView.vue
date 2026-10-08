@@ -1,0 +1,1267 @@
+<template>
+  <section class="leave-balance-page">
+
+    <!-- PAGE HEADER -->
+    <div class="balance-page-header">
+      <div>
+        <span class="balance-eyebrow">EMPLOYEE SELF SERVICE</span>
+        <h1>Leave Balance</h1>
+        <p>View your current leave balance, usage and entitlement for the year.</p>
+      </div>
+
+      <label class="year-selector">
+        <span>Leave Year</span>
+        <select v-model="selectedYear">
+          <option :value="currentYear">{{ currentYear }}</option>
+          <option :value="currentYear - 1">{{ currentYear - 1 }}</option>
+          <option :value="currentYear + 1">{{ currentYear + 1 }}</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- SUMMARY CARDS -->
+    <div class="balance-summary-grid">
+
+      <div class="summary-card">
+        <div class="summary-icon green">
+          <svg viewBox="0 0 24 24">
+            <path d="M3 11h18M5 11l2-6h10l2 6M7 11v8M17 11v8M5 19h14"/>
+          </svg>
+        </div>
+        <div class="summary-copy">
+          <span>Total Available</span>
+          <strong>{{ totalAvailable }} days</strong>
+          <small>Across all leave types</small>
+        </div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-icon blue">
+          <svg viewBox="0 0 24 24">
+            <rect x="4" y="5" width="16" height="15" rx="2"/>
+            <path d="M8 3v4M16 3v4M4 10h16M8 14h3M8 17h6"/>
+          </svg>
+        </div>
+        <div class="summary-copy">
+          <span>Total Used</span>
+          <strong>{{ totalUsed }} days</strong>
+          <small>This year</small>
+        </div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-icon orange">
+          <svg viewBox="0 0 24 24">
+            <rect x="4" y="5" width="16" height="15" rx="2"/>
+            <path d="M8 3v4M16 3v4M4 10h16M12 13v3M12 19h.01"/>
+          </svg>
+        </div>
+        <div class="summary-copy">
+          <span>Pending Approval</span>
+          <strong>{{ pendingCount }} days</strong>
+          <small>In {{ pendingRequests }} request{{ pendingRequests === 1 ? '' : 's' }}</small>
+        </div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-icon purple">
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8"/>
+            <path d="M12 8v4l3 2"/>
+          </svg>
+        </div>
+        <div class="summary-copy">
+          <span>Total Entitlement</span>
+          <strong>{{ totalEntitlement }} days</strong>
+          <small>For selected year</small>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- DETAILS -->
+    <section class="balance-details-card">
+
+      <div class="details-header">
+        <div>
+          <h2>Leave Balance Details</h2>
+          <p>Year: {{ selectedYear }}</p>
+        </div>
+
+        <div class="details-actions">
+          <div class="balance-search">
+            <svg viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="6"/>
+              <path d="m16 16 4 4"/>
+            </svg>
+            <input
+              v-model="search"
+              type="search"
+              placeholder="Search leave type..."
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="balance-table-wrap">
+        <table class="balance-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Leave Type</th>
+              <th>Maximum Consecutive<br>Leaves Allowed</th>
+              <th>Entitlement<br>(Days)</th>
+              <th>Used<br>(Days)</th>
+              <th>Pending<br>(Days)</th>
+              <th>Remaining<br>(Days)</th>
+              <th>Carry Forward</th>
+              <th>Valid Till</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr
+              v-for="(item, index) in filteredBalances"
+              :key="item.type"
+            >
+              <td class="index-cell">{{ index + 1 }}</td>
+
+              <td>
+                <div class="leave-type-cell">
+                  <span
+                    class="leave-type-icon"
+                    :class="iconClass(item.type)"
+                  >
+                    <svg v-if="item.type === 'Casual Leave'" viewBox="0 0 24 24">
+                      <path d="M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13"/>
+                    </svg>
+
+                    <svg v-else-if="item.type === 'Sick Leave'" viewBox="0 0 24 24">
+                      <path d="M12 5v14M5 12h14"/>
+                    </svg>
+
+                    <svg v-else-if="item.type === 'Paternity Leave' || item.type === 'Maternity Leave'" viewBox="0 0 24 24">
+                      <circle cx="12" cy="7" r="3"/>
+                      <path d="M6 21c.5-4 2.5-6 6-6s5.5 2 6 6"/>
+                    </svg>
+
+                    <svg v-else-if="item.type === 'Comp Off' || item.type === 'Compensatory Off'" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="8"/>
+                      <path d="M12 8v5l3 2"/>
+                    </svg>
+
+                    <svg v-else-if="item.type === 'Optional Leave'" viewBox="0 0 24 24">
+                      <rect x="5" y="4" width="14" height="16" rx="2"/>
+                      <path d="M8 8h8M8 12h8M8 16h5"/>
+                    </svg>
+
+                    <svg v-else-if="item.type === 'Carry Forward'" viewBox="0 0 24 24">
+                      <path d="M7 7h10l-3-3M17 7l-3 3M17 17H7l3 3M7 17l3-3"/>
+                    </svg>
+
+                    <svg v-else viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="8"/>
+                      <path d="M12 8v8M8 12h8"/>
+                    </svg>
+                  </span>
+
+                  <span>{{ item.type }}</span>
+                </div>
+              </td>
+
+              <td class="center-cell">
+                {{ item.maxConsecutive }}
+              </td>
+
+              <td class="center-cell">
+                {{ item.entitlement }}
+              </td>
+
+              <td class="center-cell">
+                {{ item.used }}
+              </td>
+
+              <td class="center-cell">
+                {{ item.pending }}
+              </td>
+
+              <td class="center-cell">
+                <span
+                  class="remaining-badge"
+                  :class="{ positive: item.remaining > 0 }"
+                >
+                  {{ item.remaining }}
+                </span>
+              </td>
+
+              <td class="center-cell">
+                <span
+                  class="carry-badge"
+                  :class="{ yes: item.carryForward }"
+                >
+                  {{ item.carryForward ? 'Yes' : 'No' }}
+                </span>
+              </td>
+
+              <td class="valid-cell">
+                {{ item.validTill }}
+              </td>
+
+              <td class="action-cell">
+                <button
+                  type="button"
+                  class="more-button"
+                  :aria-label="`Actions for ${item.type}`"
+                >
+                  ⋮
+                </button>
+              </td>
+            </tr>
+
+            <tr v-if="!filteredBalances.length">
+              <td colspan="10" class="empty-balance">
+                No leave balances found.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </section>
+  </section>
+</template>
+
+<script setup>
+import { computed, ref } from 'vue'
+
+const props = defineProps({
+  balances: {
+    type: Object,
+    default: () => ({})
+  },
+  pendingRequests: {
+    type: Number,
+    default: 0
+  },
+  pendingByType: {
+    type: Object,
+    default: () => ({})
+  }
+})
+
+const search = ref('')
+const filterRemaining = ref(false)
+const currentYear = new Date().getFullYear()
+const selectedYear = ref(currentYear)
+
+function number(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function getPending(balance) {
+  return number(
+    balance?.pending_leaves ??
+    balance?.pending ??
+    0
+  )
+}
+
+function getMaxConsecutive(balance) {
+  return number(
+    balance?.max_consecutive_leaves ??
+    balance?.maximum_consecutive_leaves_allowed ??
+    balance?.max_consecutive ??
+    0
+  ) || '—'
+}
+
+function getValidTill(balance) {
+  return (
+    balance?.valid_till ||
+    balance?.validTill ||
+    `31 Dec ${selectedYear.value}`
+  )
+}
+
+function normalizeBalance(type, balance) {
+  const entitlement = number(
+    balance?.total_leaves ??
+    balance?.entitlement ??
+    balance?.allocated_leaves ??
+    0
+  )
+
+  const used = number(
+    balance?.leaves_taken ??
+    balance?.used ??
+    0
+  )
+
+  const remaining = number(
+    balance?.remaining_leaves ??
+    balance?.remaining ??
+    Math.max(0, entitlement - used)
+  )
+
+  const pending = number(
+    props.pendingByType?.[type] ?? getPending(balance)
+  )
+
+  return {
+    type,
+    maxConsecutive: getMaxConsecutive(balance),
+    entitlement,
+    used,
+    pending,
+    remaining,
+    carryForward: Boolean(
+      balance?.carry_forward ??
+      balance?.carryForward ??
+      false
+    ),
+    validTill: getValidTill(balance)
+  }
+}
+
+const balanceRows = computed(() =>
+  Object.entries(props.balances || {})
+    .map(([type, balance]) => normalizeBalance(type, balance))
+)
+
+const filteredBalances = computed(() => {
+  const query = search.value.trim().toLowerCase()
+
+  return balanceRows.value.filter(item => {
+    const matchesSearch =
+      !query ||
+      item.type.toLowerCase().includes(query)
+
+    const matchesFilter =
+      !filterRemaining.value ||
+      item.remaining > 0
+
+    return matchesSearch && matchesFilter
+  })
+  })
+
+const totalAvailable = computed(() =>
+  balanceRows.value.reduce(
+    (sum, item) => sum + item.remaining,
+    0
+  )
+)
+
+const totalUsed = computed(() =>
+  balanceRows.value.reduce(
+    (sum, item) => sum + item.used,
+    0
+  )
+)
+
+const totalEntitlement = computed(() =>
+  balanceRows.value.reduce(
+    (sum, item) => sum + item.entitlement,
+    0
+  )
+)
+
+const pendingCount = computed(() =>
+  balanceRows.value.reduce(
+    (sum, item) => sum + item.pending,
+    0
+  )
+)
+
+function iconClass(type) {
+  const classes = {
+    'Birthday & Anniversary Leave': 'birthday',
+    'Personal Time Off': 'personal',
+    'Maternity Leave': 'maternity',
+    'Paternity Leave': 'paternity',
+    'Intern Leave': 'intern',
+    'Carry Forward': 'carry',
+    'Comp Off': 'comp',
+    'Compensatory Off': 'comp',
+    'Optional Leave': 'optional',
+    'Intern Adjustment': 'adjustment',
+    'FTE Adjustment': 'fte',
+    'Casual Leave': 'casual',
+    'Sick Leave': 'sick'
+  }
+
+  return classes[type] || 'default'
+}
+
+function csvValue(value) {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`
+}
+
+function exportCsv() {
+  const headers = [
+    '#',
+    'Leave Type',
+    'Maximum Consecutive Leaves Allowed',
+    'Entitlement',
+    'Used',
+    'Pending',
+    'Remaining',
+    'Carry Forward',
+    'Valid Till'
+  ]
+
+  const rows = filteredBalances.value.map((item, index) => [
+    index + 1,
+    item.type,
+    item.maxConsecutive,
+    item.entitlement,
+    item.used,
+    item.pending,
+    item.remaining,
+    item.carryForward ? 'Yes' : 'No',
+    item.validTill
+  ])
+
+  const csv = [
+    headers.map(csvValue).join(','),
+    ...rows.map(row => row.map(csvValue).join(','))
+  ].join('\\n')
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = `leave-balance-${selectedYear.value}.csv`
+  link.click()
+
+  URL.revokeObjectURL(url)
+}
+</script>
+
+<style scoped>
+.leave-balance-page {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.balance-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.balance-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: #7d8ba1;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.balance-page-header h1 {
+  margin: 0;
+  color: #172238;
+  font-size: 22px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.balance-page-header p {
+  margin: 5px 0 0;
+  color: #7c899d;
+  font-size: 9px;
+}
+
+.year-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 135px;
+}
+
+.year-selector span {
+  color: #7c899d;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.year-selector select {
+  width: 135px;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #dce3ed;
+  border-radius: 7px;
+  background: #fff;
+  color: #24344d;
+  font-size: 9px;
+  font-weight: 700;
+  outline: none;
+}
+
+.balance-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summary-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 74px;
+  padding: 12px;
+  box-sizing: border-box;
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(25, 45, 75, .025);
+}
+
+.summary-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 7px;
+}
+
+.summary-icon.green {
+  background: #e8f8f0;
+  color: #20a36a;
+}
+
+.summary-icon.blue {
+  background: #eaf3ff;
+  color: #347fe5;
+}
+
+.summary-icon.orange {
+  background: #fff3df;
+  color: #e99a21;
+}
+
+.summary-icon.purple {
+  background: #f1eaff;
+  color: #8559dc;
+}
+
+.summary-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.summary-copy {
+  min-width: 0;
+}
+
+.summary-copy span,
+.summary-copy small {
+  display: block;
+  color: #8a96a8;
+  font-size: 7px;
+}
+
+.summary-copy strong {
+  display: block;
+  margin: 3px 0;
+  color: #26364e;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.balance-details-card {
+  overflow: hidden;
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(25, 45, 75, .025);
+}
+
+.details-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 14px 11px;
+}
+
+.details-header h2 {
+  margin: 0;
+  color: #172238;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.details-header p {
+  margin: 3px 0 0;
+  color: #8a96a8;
+  font-size: 8px;
+}
+
+.details-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.balance-search {
+  display: flex;
+  align-items: center;
+  width: 145px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid #d9e1ec;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.balance-search svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  fill: none;
+  stroke: #8a96a8;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.balance-search input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 6px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #29364c;
+  font-size: 8px;
+}
+
+.balance-search input::placeholder {
+  color: #9aa5b5;
+}
+
+.outline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d9e1ec;
+  border-radius: 5px;
+  background: #fff;
+  color: #536178;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.outline-button:hover {
+  border-color: #b8c5d8;
+  background: #f8fafc;
+}
+
+.outline-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.balance-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.balance-table {
+  width: 100%;
+  min-width: 1030px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.balance-table th {
+  height: 35px;
+  padding: 0 8px;
+  border-top: 1px solid #edf0f5;
+  border-bottom: 1px solid #e8edf3;
+  background: #fafbfd;
+  color: #738198;
+  font-size: 6.5px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: left;
+  text-transform: none;
+}
+
+.balance-table th:nth-child(1) { width: 34px; text-align: center; }
+.balance-table th:nth-child(2) { width: 190px; }
+.balance-table th:nth-child(3) { width: 145px; text-align: center; }
+.balance-table th:nth-child(4),
+.balance-table th:nth-child(5),
+.balance-table th:nth-child(6),
+.balance-table th:nth-child(7) { width: 75px; text-align: center; }
+.balance-table th:nth-child(8) { width: 82px; text-align: center; }
+.balance-table th:nth-child(9) { width: 90px; text-align: center; }
+.balance-table th:nth-child(10) { width: 48px; text-align: center; }
+
+.balance-table td {
+  height: 34px;
+  padding: 0 8px;
+  border-bottom: 1px solid #edf0f5;
+  color: #43516a;
+  font-size: 7px;
+  background: #fff;
+}
+
+.balance-table tbody tr:hover td {
+  background: #fbfcff;
+}
+
+.index-cell {
+  color: #9aa5b5 !important;
+  text-align: center;
+}
+
+.leave-type-cell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #2b3a52;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.leave-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 5px;
+}
+
+.leave-type-icon svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.leave-type-icon.birthday {
+  color: #ef5b68;
+  background: #fff0f2;
+}
+
+.leave-type-icon.personal {
+  color: #8056d8;
+  background: #f2edff;
+}
+
+.leave-type-icon.maternity {
+  color: #ef5b68;
+  background: #fff0f2;
+}
+
+.leave-type-icon.paternity {
+  color: #4b8de8;
+  background: #edf5ff;
+}
+
+.leave-type-icon.intern {
+  color: #7a59d6;
+  background: #f2eeff;
+}
+
+.leave-type-icon.carry {
+  color: #8158d7;
+  background: #f1edff;
+}
+
+.leave-type-icon.comp {
+  color: #e9a12d;
+  background: #fff5df;
+}
+
+.leave-type-icon.optional {
+  color: #4f9bdc;
+  background: #edf7ff;
+}
+
+.leave-type-icon.adjustment {
+  color: #35a56f;
+  background: #eaf8f1;
+}
+
+.leave-type-icon.fte {
+  color: #4f8ee7;
+  background: #edf4ff;
+}
+
+.leave-type-icon.casual {
+  color: #39a875;
+  background: #eaf8f1;
+}
+
+.leave-type-icon.sick {
+  color: #e45b62;
+  background: #fff0f1;
+}
+
+.leave-type-icon.default {
+  color: #4d83dd;
+  background: #edf4ff;
+}
+
+.center-cell {
+  text-align: center;
+}
+
+.remaining-badge,
+.carry-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 29px;
+  height: 19px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: #f3f5f8;
+  color: #68758a;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.remaining-badge.positive {
+  background: #e8f8f0;
+  color: #28a36b;
+}
+
+.carry-badge.yes {
+  background: #e8f8f0;
+  color: #28a36b;
+}
+
+.valid-cell {
+  color: #68758a !important;
+  text-align: center;
+}
+
+.action-cell {
+  text-align: center;
+}
+
+.more-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #68758a;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.more-button:hover {
+  color: #2874e8;
+}
+
+.empty-balance {
+  height: 80px !important;
+  color: #8a96a8 !important;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .balance-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .balance-page-header {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .balance-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .balance-page-header {
+    flex-direction: column;
+  }
+
+  .details-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .details-actions {
+    width: 100%;
+  }
+
+  .balance-search {
+    flex: 1;
+  }
+}
+
+
+/* ============================================================
+   READABILITY SCALE
+   ============================================================ */
+
+.balance-page-header h1 {
+  font-size: 24px;
+}
+
+.balance-page-header p {
+  font-size: 12px;
+}
+
+.balance-eyebrow {
+  font-size: 10px;
+}
+
+.year-selector span {
+  font-size: 10px;
+}
+
+.year-selector select {
+  height: 40px;
+  min-width: 116px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+.summary-card {
+  min-height: 86px;
+  padding: 15px;
+}
+
+.summary-copy span {
+  font-size: 10px;
+}
+
+.summary-copy strong {
+  font-size: 17px;
+}
+
+.summary-copy small {
+  font-size: 9px;
+}
+
+.details-header h2 {
+  font-size: 15px;
+}
+
+.details-header p {
+  font-size: 10px;
+}
+
+.balance-search {
+  height: 38px;
+}
+
+.balance-search input {
+  font-size: 10px;
+}
+
+.outline-button {
+  height: 38px;
+  padding: 0 12px;
+  font-size: 10px;
+}
+
+.balance-table th {
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.balance-table td {
+  font-size: 10px;
+}
+
+.balance-table tbody tr {
+  height: 52px;
+}
+
+.balance-type {
+  font-size: 10px;
+}
+
+.remaining-pill,
+.carry-pill {
+  font-size: 9px;
+}
+
+
+
+/* ============================================================
+   FINAL READABILITY OVERRIDE
+   ============================================================ */
+
+.leave-balance-page .summary-copy span {
+  font-size: 12px !important;
+}
+
+.leave-balance-page .summary-copy strong {
+  font-size: 20px !important;
+}
+
+.leave-balance-page .summary-copy small {
+  font-size: 10px !important;
+}
+
+.leave-balance-page .details-header h2 {
+  font-size: 17px !important;
+}
+
+.leave-balance-page .details-header p {
+  font-size: 11px !important;
+}
+
+.leave-balance-page .balance-search {
+  height: 40px !important;
+}
+
+.leave-balance-page .balance-search input {
+  font-size: 11px !important;
+}
+
+.leave-balance-page .outline-button {
+  height: 40px !important;
+  padding: 0 14px !important;
+  font-size: 11px !important;
+}
+
+.leave-balance-page .balance-table th {
+  font-size: 10px !important;
+  line-height: 1.4 !important;
+  padding: 12px 10px !important;
+}
+
+.leave-balance-page .balance-table td {
+  font-size: 12px !important;
+  padding: 15px 10px !important;
+}
+
+.leave-balance-page .balance-table tbody tr {
+  min-height: 58px !important;
+}
+
+.leave-balance-page .balance-type {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
+.leave-balance-page .remaining-pill,
+.leave-balance-page .carry-pill {
+  font-size: 10px !important;
+}
+
+.leave-balance-page .year-selector span {
+  font-size: 10px !important;
+}
+
+.leave-balance-page .year-selector select {
+  height: 42px !important;
+  font-size: 12px !important;
+}
+
+
+
+/* ============================================================
+   LARGE, EASY-TO-READ LEAVE BALANCE TABLE
+   ============================================================ */
+
+.leave-balance-page .balance-table {
+  font-size: 14px !important;
+}
+
+.leave-balance-page .balance-table thead th {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+  padding: 16px 12px !important;
+}
+
+.leave-balance-page .balance-table tbody td {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  padding: 18px 12px !important;
+}
+
+.leave-balance-page .balance-table tbody tr {
+  height: 64px !important;
+}
+
+.leave-balance-page .balance-type {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+.leave-balance-page .remaining-pill,
+.leave-balance-page .carry-pill {
+  font-size: 11px !important;
+  padding: 5px 9px !important;
+}
+
+.leave-balance-page .summary-copy span {
+  font-size: 12px !important;
+}
+
+.leave-balance-page .summary-copy strong {
+  font-size: 21px !important;
+}
+
+.leave-balance-page .summary-copy small {
+  font-size: 10px !important;
+}
+
+.leave-balance-page .details-header h2 {
+  font-size: 18px !important;
+}
+
+.leave-balance-page .details-header p {
+  font-size: 11px !important;
+}
+
+.leave-balance-page .balance-search input {
+  font-size: 12px !important;
+}
+
+.leave-balance-page .outline-button {
+  font-size: 11px !important;
+}
+
+
+
+/* Leave type names - readability */
+.leave-balance-page .leave-type-cell,
+.leave-balance-page .leave-type-cell span,
+.leave-balance-page .leave-type-cell strong {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  color: #2b3a52 !important;
+}
+
+.leave-balance-page .leave-type-cell {
+  gap: 10px !important;
+}
+
+.leave-balance-page .leave-type-icon {
+  width: 30px !important;
+  height: 30px !important;
+  flex: 0 0 30px !important;
+}
+
+.leave-balance-page .leave-type-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+</style>
+/* ============================================================
+   FINAL READABILITY OVERRIDES
+   ============================================================ */
+
+.balance-table th {
+  height: 46px !important;
+  padding: 0 12px !important;
+  font-size: 10px !important;
+  line-height: 1.35 !important;
+}
+
+.balance-table td {
+  height: 52px !important;
+  padding: 0 12px !important;
+  font-size: 11px !important;
+}
+
+.balance-table th,
+.balance-table td {
+  box-sizing: border-box !important;
+}
+
+.leave-type-cell {
+  gap: 10px !important;
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+}
+
+.leave-type-icon {
+  width: 28px !important;
+  height: 28px !important;
+  flex: 0 0 28px !important;
+}
+
+.leave-type-icon svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.index-cell,
+.center-cell,
+.valid-cell,
+.action-cell {
+  font-size: 11px !important;
+}
+
+.remaining-badge,
+.carry-badge {
+  font-size: 10px !important;
+}
+
+.more-button {
+  font-size: 18px !important;
+}
+
+.details-header h2 {
+  font-size: 16px !important;
+}
+
+.details-header p {
+  font-size: 10px !important;
+}
+
+.balance-search {
+  width: 190px !important;
+  height: 36px !important;
+}
+
+.balance-search input {
+  font-size: 10px !important;
+}
+
+.outline-button {
+  height: 36px !important;
+  padding: 0 12px !important;
+  font-size: 10px !important;
+}

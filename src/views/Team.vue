@@ -12,19 +12,23 @@ const apps = ref([])
 const team = ref([])
 const loading = ref(true)
 const error = ref('')
-const selected = ref(null)
 
-/* -----------------------------
-   TEAM ATTENDANCE
------------------------------- */
+const tab = ref('all')
+const search = ref('')
+const selectedIds = ref([])
+const weekTarget = 40
+
+const tabs = [
+  { key: 'all', label: 'Team Members' },
+  { key: 'present', label: 'Present' },
+  { key: 'absent', label: 'Absent' },
+  { key: 'onleave', label: 'On Leave' },
+  { key: 'pending', label: 'Pending' }
+]
 
 const attendanceRecords = ref([])
 const attendanceLoading = ref(false)
 const attendanceError = ref('')
-
-/* -----------------------------
-   TEAM TIMESHEETS
------------------------------- */
 
 const timesheetRecords = ref([])
 const timesheetLoading = ref(false)
@@ -34,28 +38,56 @@ function state(l) {
   return l.workflow_state || l.status
 }
 
-function pct(b) {
-  return b.total_leaves
-    ? Math.min(
-        100,
-        Math.round(
-          (b.leaves_taken / b.total_leaves) * 100
-        )
-      )
-    : 0
+const open = (id) => id && router.push(`/team/employee/${id}`)
+
+const pctOf = (n, d) => (d ? Math.round((n / d) * 100) : 0)
+
+function fmt(d) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  })
 }
 
-const open = (id) =>
-  id && router.push(`/team/employee/${id}`)
-
-function pick(name) {
-  selected.value =
-    selected.value === name ? null : name
+function abbr(type = '') {
+  const words = type.replace(/[^A-Za-z ]/g, ' ').split(/\s+/).filter(Boolean)
+  if (words.length > 1) return words.map((w) => w[0]).join('').toUpperCase().slice(0, 4)
+  return (words[0] || '').slice(0, 4).toUpperCase()
 }
 
-/* -----------------------------
-   LOAD TEAM ATTENDANCE
------------------------------- */
+function conic(segments, total) {
+  if (!total) return '#e5e7eb'
+  let acc = 0
+  const parts = []
+  segments.forEach((s) => {
+    if (!s.v) return
+    const a = (acc / total) * 100
+    acc += s.v
+    parts.push(`${s.c} ${a}% ${(acc / total) * 100}%`)
+  })
+  if (acc < total) parts.push(`#e5e7eb ${(acc / total) * 100}% 100%`)
+  return `conic-gradient(${parts.join(',')})`
+}
+
+/* ---------- week range (Mon–Sun) of the selected date ---------- */
+
+const bounds = computed(() => {
+  const d = new Date(viewDate.value + 'T00:00:00')
+  const day = (d.getDay() + 6) % 7
+  const start = new Date(d)
+  start.setDate(d.getDate() - day)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return {
+    start: start.toLocaleDateString('en-CA'),
+    end: end.toLocaleDateString('en-CA')
+  }
+})
+
+const rangeLabel = computed(() => `${fmt(bounds.value.start)} – ${fmt(bounds.value.end)}`)
+
+/* ---------- LOADERS ---------- */
 
 async function loadTeamAttendance() {
   if (!team.value.length) {
@@ -67,122 +99,33 @@ async function loadTeamAttendance() {
   attendanceError.value = ''
 
   try {
-    const employeeIds = team.value.map(
-      (member) => member.id
-    )
-
-    const res = await api.get(
-      '/api/resource/Attendance',
-      {
-        params: {
-          filters: JSON.stringify([
-            ['employee', 'in', employeeIds],
-            ['attendance_date', '=', viewDate.value],
-            ['docstatus', '!=', 2]
-          ]),
-          fields: JSON.stringify([
-            'name',
-            'employee',
-            'employee_name',
-            'attendance_date',
-            'status',
-            'leave_type'
-          ]),
-          order_by: 'employee_name asc',
-          limit_page_length: 500
-        }
+    const res = await api.get('/api/resource/Attendance', {
+      params: {
+        filters: JSON.stringify([
+          ['employee', 'in', team.value.map((m) => m.id)],
+          ['attendance_date', '=', viewDate.value],
+          ['docstatus', '!=', 2]
+        ]),
+        fields: JSON.stringify([
+          'name',
+          'employee',
+          'employee_name',
+          'attendance_date',
+          'status',
+          'leave_type'
+        ]),
+        order_by: 'employee_name asc',
+        limit_page_length: 500
       }
-    )
-
-    attendanceRecords.value =
-      res.data.data || []
+    })
+    attendanceRecords.value = res.data.data || []
   } catch (e) {
-    attendanceError.value = errMsg(
-      e,
-      'Could not load team attendance'
-    )
-
+    attendanceError.value = errMsg(e, 'Could not load team attendance')
     attendanceRecords.value = []
   } finally {
     attendanceLoading.value = false
   }
 }
-
-/* -----------------------------
-   ATTENDANCE COMPUTED DATA
------------------------------- */
-
-const attendanceStats = computed(() => {
-  const present =
-    attendanceRecords.value.filter(
-      (r) => r.status === 'Present'
-    ).length
-
-  const absent =
-    attendanceRecords.value.filter(
-      (r) => r.status === 'Absent'
-    ).length
-
-  const halfDay =
-    attendanceRecords.value.filter(
-      (r) => r.status === 'Half Day'
-    ).length
-
-  const onLeave =
-    attendanceRecords.value.filter(
-      (r) => r.status === 'On Leave'
-    ).length
-
-  return {
-    present,
-    absent,
-    halfDay,
-    onLeave
-  }
-})
-
-const attendanceRows = computed(() => {
-  return team.value.map((member) => {
-    const record =
-      attendanceRecords.value.find(
-        (r) => r.employee === member.id
-      )
-
-    return {
-      id: member.id,
-      name: member.name,
-      status:
-        record?.status || 'Not Marked',
-      leaveType:
-        record?.leave_type || ''
-    }
-  })
-})
-
-const attendancePercentage = computed(() => {
-  const total =
-    attendanceStats.value.present +
-    attendanceStats.value.absent +
-    attendanceStats.value.halfDay +
-    attendanceStats.value.onLeave
-
-  if (!total) return 0
-
-  return Math.round(
-    (
-      (
-        attendanceStats.value.present +
-        attendanceStats.value.halfDay * 0.5
-      ) /
-      total
-    ) *
-      100
-  )
-})
-
-/* -----------------------------
-   LOAD TEAM TIMESHEETS
------------------------------- */
 
 async function loadTeamTimesheets() {
   if (!team.value.length) {
@@ -194,298 +137,237 @@ async function loadTeamTimesheets() {
   timesheetError.value = ''
 
   try {
-    const employeeIds = team.value.map(
-      (member) => member.id
-    )
-
-    const res = await api.get(
-      '/api/resource/Timesheet',
-      {
-        params: {
-          filters: JSON.stringify([
-            ['employee', 'in', employeeIds]
-          ]),
-          fields: JSON.stringify([
-            'name',
-            'employee',
-            'employee_name',
-            'status',
-            'start_date',
-            'end_date',
-            'total_hours'
-          ]),
-          order_by: 'start_date desc',
-          limit_page_length: 500
-        }
+    const res = await api.get('/api/resource/Timesheet', {
+      params: {
+        filters: JSON.stringify([
+          ['employee', 'in', team.value.map((m) => m.id)],
+          ['docstatus', '!=', 2],
+          ['start_date', '<=', bounds.value.end],
+          ['end_date', '>=', bounds.value.start]
+        ]),
+        fields: JSON.stringify([
+          'name',
+          'employee',
+          'employee_name',
+          'status',
+          'start_date',
+          'end_date',
+          'total_hours'
+        ]),
+        order_by: 'start_date desc',
+        limit_page_length: 500
       }
-    )
-
-    timesheetRecords.value =
-      res.data.data || []
+    })
+    timesheetRecords.value = res.data.data || []
   } catch (e) {
-    timesheetError.value = errMsg(
-      e,
-      'Could not load team timesheets'
-    )
-
+    timesheetError.value = errMsg(e, 'Could not load team timesheets')
     timesheetRecords.value = []
   } finally {
     timesheetLoading.value = false
   }
 }
 
-/* -----------------------------
-   TIMESHEET COMPUTED DATA
------------------------------- */
-
-const timesheetStats = computed(() => {
-  const records =
-    timesheetRecords.value
-
-  return {
-    total: records.length,
-
-    draft: records.filter(
-      (r) => r.status === 'Draft'
-    ).length,
-
-    submitted: records.filter(
-      (r) => r.status === 'Submitted'
-    ).length,
-
-    cancelled: records.filter(
-      (r) => r.status === 'Cancelled'
-    ).length,
-
-    totalHours: records.reduce(
-      (sum, r) =>
-        sum + Number(r.total_hours || 0),
-      0
-    )
-  }
-})
-
-const timesheetEmployeeRows = computed(() => {
-  return team.value.map((member) => {
-    const records =
-      timesheetRecords.value.filter(
-        (r) => r.employee === member.id
-      )
-
-    const hours = records.reduce(
-      (sum, r) =>
-        sum + Number(r.total_hours || 0),
-      0
-    )
-
-    return {
-      id: member.id,
-      name: member.name,
-      timesheets: records.length,
-      hours
-    }
-  })
-})
-
-/* -----------------------------
-   LOAD TEAM DATA
------------------------------- */
-
 onMounted(async () => {
   try {
-    const res = await api.get(
-      '/api/resource/Leave Application',
-      {
-        params: {
-          filters: JSON.stringify([
-            ['leave_approver', '=', email],
-            ['owner', '!=', email]
-          ]),
-          fields: JSON.stringify([
-            'name',
-            'employee',
-            'employee_name',
-            'leave_type',
-            'from_date',
-            'to_date',
-            'total_leave_days',
-            'status',
-            'workflow_state'
-          ]),
-          order_by: 'from_date desc',
-          limit_page_length: 500
-        }
+    const res = await api.get('/api/resource/Leave Application', {
+      params: {
+        filters: JSON.stringify([
+          ['leave_approver', '=', email],
+          ['owner', '!=', email]
+        ]),
+        fields: JSON.stringify([
+          'name',
+          'employee',
+          'employee_name',
+          'leave_type',
+          'from_date',
+          'to_date',
+          'total_leave_days',
+          'status',
+          'workflow_state'
+        ]),
+        order_by: 'from_date desc',
+        limit_page_length: 500
       }
-    )
+    })
 
     apps.value = res.data.data.filter(
-      (l) =>
-        !['Rejected', 'Cancelled'].includes(
-          state(l)
-        )
+      (l) => !['Rejected', 'Cancelled'].includes(state(l))
     )
 
     const members = new Map()
-
-    apps.value.forEach((l) => {
-      members.set(
-        l.employee,
-        l.employee_name
-      )
-    })
+    apps.value.forEach((l) => members.set(l.employee, l.employee_name))
 
     try {
-      const emp = await api.get(
-        '/api/resource/Employee',
-        {
-          params: {
-            filters: JSON.stringify([
-              ['leave_approver', '=', email],
-              ['status', '=', 'Active']
-            ]),
-            fields: JSON.stringify([
-              'name',
-              'employee_name'
-            ]),
-            limit_page_length: 200
-          }
+      const emp = await api.get('/api/resource/Employee', {
+        params: {
+          filters: JSON.stringify([
+            ['leave_approver', '=', email],
+            ['status', '=', 'Active']
+          ]),
+          fields: JSON.stringify(['name', 'employee_name']),
+          limit_page_length: 200
         }
-      )
-
-      emp.data.data.forEach((e) => {
-        members.set(
-          e.name,
-          e.employee_name
-        )
       })
+      emp.data.data.forEach((e) => members.set(e.name, e.employee_name))
     } catch {}
 
     team.value = await Promise.all(
-      [...members.entries()].map(
-        async ([id, name]) => {
-          try {
-            const r = await api.get(
-              '/api/method/hrms.hr.doctype.leave_application.leave_application.get_leave_details',
-              {
-                params: {
-                  employee: id,
-                  date: today
-                }
-              }
-            )
-
-            const alloc =
-              r.data.message.leave_allocation ||
-              {}
-
-            const balances =
-              Object.entries(alloc).map(
-                ([type, v]) => ({
-                  type,
-                  ...v
-                })
-              )
-
-            return {
-              id,
-              name,
-              balances,
-              ok: true
-            }
-          } catch {
-            return {
-              id,
-              name,
-              balances: [],
-              ok: false
-            }
-          }
+      [...members.entries()].map(async ([id, name]) => {
+        try {
+          const r = await api.get(
+            '/api/method/hrms.hr.doctype.leave_application.leave_application.get_leave_details',
+            { params: { employee: id, date: today } }
+          )
+          const alloc = r.data.message.leave_allocation || {}
+          const balances = Object.entries(alloc).map(([type, v]) => ({ type, ...v }))
+          return { id, name, balances, ok: true }
+        } catch {
+          return { id, name, balances: [], ok: false }
         }
-      )
+      })
     )
 
-    await loadTeamAttendance()
-    await loadTeamTimesheets()
+    /* designation + joining date for the table and "new this month" */
+    try {
+      const ids = team.value.map((m) => m.id)
+      if (ids.length) {
+        const r = await api.get('/api/resource/Employee', {
+          params: {
+            filters: JSON.stringify([['name', 'in', ids]]),
+            fields: JSON.stringify(['name', 'designation', 'date_of_joining']),
+            limit_page_length: 200
+          }
+        })
+        const info = new Map(r.data.data.map((e) => [e.name, e]))
+        team.value = team.value.map((m) => ({
+          ...m,
+          designation: info.get(m.id)?.designation || '',
+          joined: info.get(m.id)?.date_of_joining || ''
+        }))
+      }
+    } catch {}
+
+    await Promise.all([loadTeamAttendance(), loadTeamTimesheets()])
   } catch (e) {
-    if (
-      e.response?.status === 401 ||
-      e.response?.status === 403
-    ) {
+    if (e.response?.status === 401 || e.response?.status === 403) {
       localStorage.removeItem('user')
       router.push('/login')
     } else {
-      error.value = errMsg(
-        e,
-        'Could not load team data'
-      )
+      error.value = errMsg(e, 'Could not load team data')
     }
   }
 
   loading.value = false
 })
 
-/* -----------------------------
-   WATCH DATE / TEAM
------------------------------- */
-
 watch(
-  () => [
-    viewDate.value,
-    team.value.map(
-      (member) => member.id
-    ).join(',')
-  ],
+  () => [viewDate.value, team.value.map((m) => m.id).join(',')],
   () => {
     if (!loading.value) {
       loadTeamAttendance()
+      loadTeamTimesheets()
     }
   }
 )
 
-/* -----------------------------
-   LEAVE COMPUTED DATA
------------------------------- */
+/* ---------- ATTENDANCE ---------- */
 
-const onLeave = computed(() =>
-  apps.value.filter(
-    (l) =>
-      state(l) === 'Approved' &&
-      l.from_date <= viewDate.value &&
-      l.to_date >= viewDate.value
+const attendanceStats = computed(() => {
+  const count = (s) => attendanceRecords.value.filter((r) => r.status === s).length
+  return {
+    present: count('Present'),
+    absent: count('Absent'),
+    halfDay: count('Half Day'),
+    onLeave: count('On Leave'),
+    wfh: count('Work From Home')
+  }
+})
+
+const total = computed(() => team.value.length)
+const presentPct = computed(() => pctOf(attendanceStats.value.present, total.value))
+
+const attendanceLegend = computed(() => [
+  { label: 'Present', v: attendanceStats.value.present, c: '#22c55e' },
+  { label: 'Absent', v: attendanceStats.value.absent, c: '#ef4444' },
+  { label: 'On Leave', v: attendanceStats.value.onLeave, c: '#f59e0b' },
+  { label: 'Half Day', v: attendanceStats.value.halfDay, c: '#8b5cf6' },
+  { label: 'WFH', v: attendanceStats.value.wfh, c: '#94a3b8' }
+])
+
+const attendanceBg = computed(() => conic(attendanceLegend.value, total.value))
+
+/* ---------- TIMESHEETS (selected week) ---------- */
+
+const timesheetByEmp = computed(() => {
+  const map = new Map()
+  team.value.forEach((m) => {
+    const recs = timesheetRecords.value.filter((r) => r.employee === m.id)
+    const hours = recs.reduce((s, r) => s + Number(r.total_hours || 0), 0)
+    const status = recs.some((r) => r.status !== 'Draft')
+      ? 'Submitted'
+      : recs.length
+        ? 'Pending'
+        : 'Not Started'
+    map.set(m.id, { hours, status })
+  })
+  return map
+})
+
+const timesheetStats = computed(() => {
+  const vals = [...timesheetByEmp.value.values()]
+  return {
+    submitted: vals.filter((v) => v.status === 'Submitted').length,
+    pending: vals.filter((v) => v.status === 'Pending').length,
+    notStarted: vals.filter((v) => v.status === 'Not Started').length
+  }
+})
+
+const timesheetPct = computed(() => pctOf(timesheetStats.value.submitted, total.value))
+
+const timesheetBg = computed(() =>
+  conic(
+    [
+      { v: timesheetStats.value.submitted, c: '#2563eb' },
+      { v: timesheetStats.value.pending, c: '#93c5fd' },
+      { v: timesheetStats.value.notStarted, c: '#9ca3af' }
+    ],
+    total.value
   )
 )
+
+/* ---------- LEAVE ---------- */
 
 const onLeaveIds = computed(
   () =>
     new Set(
-      onLeave.value.map(
-        (l) => l.employee
-      )
+      apps.value
+        .filter(
+          (l) =>
+            state(l) === 'Approved' &&
+            l.from_date <= viewDate.value &&
+            l.to_date >= viewDate.value
+        )
+        .map((l) => l.employee)
     )
 )
 
-const upcoming = computed(() =>
-  apps.value
-    .filter(
-      (l) =>
-        state(l) === 'Approved' &&
-        l.from_date > viewDate.value
+const pendingIds = computed(
+  () =>
+    new Set(
+      apps.value
+        .filter((l) => ['Pending', 'Open'].includes(state(l)))
+        .map((l) => l.employee)
     )
-    .sort((a, b) =>
-      a.from_date.localeCompare(
-        b.from_date
-      )
-    )
-    .slice(0, 8)
 )
 
-const pendingList = computed(() =>
-  apps.value.filter((l) =>
-    ['Pending', 'Open'].includes(
-      state(l)
-    )
-  )
-)
+const leaveColorByType = {
+  CL: '#22c55e',
+  SL: '#ef4444',
+  EL: '#8b5cf6',
+  CO: '#f59e0b',
+  CF: '#3b82f6'
+}
 
 const monthlyLeaveTypes = computed(() => {
   const month = viewDate.value.slice(0, 7)
@@ -506,81 +388,231 @@ const monthlyLeaveTypes = computed(() => {
       counts[type] = (counts[type] || 0) + Number(l.total_leave_days || 0)
     })
 
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([type, days]) => ({
-      type,
-      days,
-      percentage: team.value.length
-        ? Math.min(100, Math.round((days / team.value.length) * 100))
-        : 0
-    }))
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1])
+  const top = sorted.slice(0, 4)
+  const rest = sorted.slice(4).reduce((s, [, d]) => s + d, 0)
+  if (rest) top.push(['Others', rest])
+
+  return top.map(([type, days]) => ({
+    type,
+    days,
+    key: type === 'Others' ? 'Others' : abbr(type),
+    color:
+      type === 'Others'
+        ? '#94a3b8'
+        : leaveColorByType[abbr(type)] || '#64748b'
+  }))
 })
 
-const detail = computed(() => {
-  switch (selected.value) {
-    case 'members':
-      return {
-        title: 'Team members',
-        empty: 'No team members yet.',
-        rows: team.value.map((m) => ({
-          key: m.id,
-          emp: m.id,
-          title: m.name,
-          sub: m.id,
-          tag: onLeaveIds.value.has(m.id)
-            ? 'On leave'
-            : 'Available'
-        }))
-      }
+const leaveTop = computed(() => {
+  const max = Math.max(1, ...monthlyLeaveTypes.value.map((i) => i.days))
+  return Math.max(4, Math.ceil(max / 2) * 2)
+})
 
-    case 'onleave':
-      return {
-        title: `On leave on ${viewDate.value}`,
-        empty:
-          'Nobody is on approved leave on this date.',
-        rows: onLeave.value.map((l) => ({
-          key: l.name,
-          emp: l.employee,
-          title: l.employee_name,
-          sub: `${l.leave_type} · ${l.from_date} to ${l.to_date}`,
-          tag: `${l.total_leave_days} day(s)`
-        }))
-      }
+const leaveTicks = computed(() => [leaveTop.value, leaveTop.value / 2, 0])
 
-    case 'pending':
-      return {
-        title: 'Pending requests',
-        empty: 'No pending requests.',
-        rows: pendingList.value.map((l) => ({
-          key: l.name,
-          emp: l.employee,
-          title: l.employee_name,
-          sub: `${l.leave_type} · ${l.from_date} to ${l.to_date} · ${l.total_leave_days} day(s)`,
-          tag: 'Pending'
-        })),
-        approvals: true
-      }
+/* ---------- STAT CARDS ---------- */
 
-    case 'upcoming':
-      return {
-        title: 'Upcoming approved leaves',
-        empty:
-          'No upcoming approved leaves.',
-        rows: upcoming.value.map((l) => ({
-          key: l.name,
-          emp: l.employee,
-          title: l.employee_name,
-          sub: `${l.leave_type} · ${l.from_date} to ${l.to_date}`,
-          tag: `${l.total_leave_days} day(s)`
-        }))
-      }
+const newThisMonth = computed(
+  () =>
+    team.value.filter((m) => (m.joined || '').slice(0, 7) === viewDate.value.slice(0, 7))
+      .length
+)
 
-    default:
-      return null
+/* ---------- TABLE ---------- */
+
+const memberRows = computed(() =>
+  team.value.map((m) => {
+    const rec = attendanceRecords.value.find((r) => r.employee === m.id)
+    const ts = timesheetByEmp.value.get(m.id) || { hours: 0, status: 'Not Started' }
+    return {
+      id: m.id,
+      name: m.name,
+      designation: m.designation || '—',
+      status: rec?.status || 'Not Marked',
+      hours: Math.round(ts.hours * 10) / 10,
+      hoursPct: Math.min(100, pctOf(ts.hours, weekTarget)),
+      tsStatus: ts.status,
+      balances: m.ok ? m.balances.slice(0, 3) : [],
+      balanceOk: m.ok
+    }
+  })
+)
+
+const filteredRows = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return memberRows.value.filter((r) => {
+    if (tab.value === 'present' && r.status !== 'Present') return false
+    if (tab.value === 'absent' && r.status !== 'Absent') return false
+    if (tab.value === 'onleave' && !(r.status === 'On Leave' || onLeaveIds.value.has(r.id)))
+      return false
+    if (tab.value === 'pending' && !pendingIds.value.has(r.id)) return false
+    if (q && !`${r.name} ${r.id} ${r.designation}`.toLowerCase().includes(q)) return false
+    return true
+  })
+})
+
+const allSelected = computed(
+  () =>
+    filteredRows.value.length > 0 &&
+    filteredRows.value.every((r) => selectedIds.value.includes(r.id))
+)
+
+function toggleAll(e) {
+  selectedIds.value = e.target.checked ? filteredRows.value.map((r) => r.id) : []
+}
+
+function statusClass(s) {
+  return (
+    {
+      Present: 'g',
+      Absent: 'r',
+      'On Leave': 'o',
+      'Half Day': 'p',
+      'Work From Home': 'b'
+    }[s] || 'n'
+  )
+}
+
+function tsClass(s) {
+  return { Submitted: 'g', Pending: 'o' }[s] || 'n'
+}
+
+function exportCsv() {
+  const rows = selectedIds.value.length
+    ? filteredRows.value.filter((r) => selectedIds.value.includes(r.id))
+    : filteredRows.value
+
+  const head = ['Employee ID', 'Name', 'Designation', 'Status Today', 'Week Hours', 'Timesheet', 'Leave Balance']
+  const lines = rows.map((r) =>
+    [
+      r.id,
+      r.name,
+      r.designation,
+      r.status,
+      r.hours,
+      r.tsStatus,
+      r.balances.map((b) => `${abbr(b.type)} ${b.remaining_leaves}`).join(' | ')
+    ]
+      .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`)
+      .join(',')
+  )
+
+  const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `team-${viewDate.value}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+/* ---------- TEAM TIMESHEETS POPUP ---------- */
+
+const tsOpen = ref(false)
+const tsEmployee = ref('all')
+const tsRange = ref('week') // 'week' | 'all'
+const tsRows = ref([])
+const tsLoading = ref(false)
+const tsErr = ref('')
+const expanded = ref('')
+const logsByName = ref({})
+const logsLoading = ref('')
+
+async function loadTsPopup() {
+  if (!team.value.length) {
+    tsRows.value = []
+    return
   }
+  tsLoading.value = true
+  tsErr.value = ''
+  try {
+    const filters = [
+      ['employee', 'in', team.value.map((m) => m.id)],
+      ['docstatus', '!=', 2]
+    ]
+    if (tsRange.value === 'week') {
+      filters.push(['start_date', '<=', bounds.value.end])
+      filters.push(['end_date', '>=', bounds.value.start])
+    }
+    const res = await api.get('/api/resource/Timesheet', {
+      params: {
+        filters: JSON.stringify(filters),
+        fields: JSON.stringify([
+          'name',
+          'employee',
+          'employee_name',
+          'start_date',
+          'end_date',
+          'total_hours',
+          'status'
+        ]),
+        order_by: 'start_date desc',
+        limit_page_length: 500
+      }
+    })
+    tsRows.value = res.data.data || []
+  } catch (e) {
+    tsErr.value = errMsg(e, 'Could not load team timesheets')
+    tsRows.value = []
+  } finally {
+    tsLoading.value = false
+  }
+}
+
+function openTimesheets(empId = 'all') {
+  tsEmployee.value = empId
+  expanded.value = ''
+  tsOpen.value = true
+  loadTsPopup()
+}
+
+function closeTimesheets() {
+  tsOpen.value = false
+}
+
+async function toggleLogs(name) {
+  if (expanded.value === name) {
+    expanded.value = ''
+    return
+  }
+  expanded.value = name
+  if (logsByName.value[name]) return
+  logsLoading.value = name
+  try {
+    const res = await api.get(`/api/resource/Timesheet/${encodeURIComponent(name)}`)
+    logsByName.value = {
+      ...logsByName.value,
+      [name]: res.data.data?.time_logs || []
+    }
+  } catch (e) {
+    logsByName.value = { ...logsByName.value, [name]: [] }
+    tsErr.value = errMsg(e, 'Could not load time logs')
+  } finally {
+    logsLoading.value = ''
+  }
+}
+
+watch(tsRange, () => {
+  if (tsOpen.value) loadTsPopup()
 })
+
+watch(
+  () => viewDate.value,
+  () => {
+    if (tsOpen.value && tsRange.value === 'week') loadTsPopup()
+  }
+)
+
+const tsFiltered = computed(() =>
+  tsRows.value.filter((r) => tsEmployee.value === 'all' || r.employee === tsEmployee.value)
+)
+
+const tsTotalHours = computed(
+  () =>
+    Math.round(tsFiltered.value.reduce((s, r) => s + Number(r.total_hours || 0), 0) * 100) / 100
+)
+
+const tsChip = (s) => (s === 'Draft' ? 'o' : s === 'Cancelled' ? 'r' : 'g')
 </script>
 
 <template>
@@ -589,70 +621,55 @@ const detail = computed(() => {
     <div class="dashboard-header">
       <div>
         <h2>My Team</h2>
-        <p>Overview of your team's attendance, timesheets, leaves and activity.</p>
+        <p>Overview of your team's attendance, timesheets, leaves and overall activity.</p>
       </div>
 
       <div class="header-date">
+        <span class="range-pill">📅 {{ rangeLabel }}</span>
         <input type="date" v-model="viewDate" />
         <button type="button" @click="viewDate = today">Today</button>
       </div>
     </div>
 
     <p v-if="error" class="error-message">{{ error }}</p>
-
-    <p v-if="loading" class="loading-message">
-      Loading team dashboard...
-    </p>
+    <p v-if="attendanceError" class="error-message">{{ attendanceError }}</p>
+    <p v-if="timesheetError" class="error-message">{{ timesheetError }}</p>
+    <p v-if="loading" class="loading-message">Loading team dashboard...</p>
 
     <template v-else>
-
       <!-- SUMMARY CARDS -->
       <section class="summary-grid">
-
-        <button
-          type="button"
-          class="summary-card"
-          @click="pick('members')"
-        >
+        <button type="button" class="summary-card" @click="tab = 'all'">
           <div class="summary-icon blue-icon">👥</div>
           <div class="summary-content">
             <span>Total Team Members</span>
-            <strong>{{ team.length }}</strong>
-            <small>Active team members</small>
+            <strong>{{ total }}</strong>
+            <small class="up">↑ {{ newThisMonth }} new this month</small>
           </div>
         </button>
 
-        <button
-          type="button"
-          class="summary-card"
-          @click="pick('present')"
-        >
+        <button type="button" class="summary-card" @click="tab = 'present'">
           <div class="summary-icon green-icon">✓</div>
-          <div class="summary-content">
+          <div class="summary-content grow">
             <span>Present Today</span>
-            <strong>{{ attendanceStats.present }}</strong>
-            <small>Marked present</small>
+            <strong>
+              {{ attendanceStats.present }} / {{ total }}
+              <em>{{ presentPct }}%</em>
+            </strong>
+            <div class="mini-bar"><i :style="{ width: presentPct + '%' }"></i></div>
           </div>
         </button>
 
-        <button
-          type="button"
-          class="summary-card"
-          @click="pick('onleave')"
-        >
-          <div class="summary-icon purple-icon">◷</div>
+        <button type="button" class="summary-card" @click="tab = 'onleave'">
+          <div class="summary-icon amber-icon">✈</div>
           <div class="summary-content">
             <span>On Leave Today</span>
             <strong>{{ attendanceStats.onLeave }}</strong>
-            <small>Approved leave</small>
+            <small class="link">View Leave Details →</small>
           </div>
         </button>
 
-        <button
-          type="button"
-          class="summary-card"
-          @click="pick('absent')"
-        >
+        <button type="button" class="summary-card" @click="tab = 'absent'">
           <div class="summary-icon red-icon">!</div>
           <div class="summary-content">
             <span>Absent Today</span>
@@ -660,368 +677,383 @@ const detail = computed(() => {
             <small>Not present</small>
           </div>
         </button>
-
       </section>
 
       <!-- OVERVIEW -->
       <section class="overview-grid">
-
-        <!-- ATTENDANCE -->
+        <!-- Attendance -->
         <div class="dashboard-card attendance-card">
-          <div class="card-heading">
-            <div>
-              <h3>Attendance Overview</h3>
-              <p>Team attendance for {{ viewDate }}</p>
-            </div>
+          <div class="oc-head">
+            <h3>Attendance Overview</h3>
+            <p>Team attendance for {{ viewDate }}</p>
           </div>
 
-          <div v-if="attendanceLoading" class="empty-state">
-            Loading attendance...
-          </div>
-
-          <div v-else class="attendance-overview">
-            <div
-              class="attendance-ring"
-              :style="{
-                '--present-pct': team.length ? (attendanceStats.present / team.length) * 100 : 0,
-                '--absent-pct': team.length ? (attendanceStats.absent / team.length) * 100 : 0,
-                '--leave-pct': team.length ? (attendanceStats.onLeave / team.length) * 100 : 0,
-                '--half-pct': team.length ? (attendanceStats.halfDay / team.length) * 100 : 0
-              }"
-            >
-              <div class="ring-value">
-                <strong>{{ team.length }}</strong>
-                <span>Team Members</span>
-              </div>
-            </div>
-
-            <div class="legend-list">
-              <div class="legend-item">
-                <span class="legend-dot present-dot"></span>
-                <span>Present</span>
-                <strong>{{ attendanceStats.present }}</strong>
-                <small>{{ team.length ? Math.round((attendanceStats.present / team.length) * 100) : 0 }}%</small>
+          <div class="oc-body">
+            <div v-if="attendanceLoading" class="empty-state">Loading attendance...</div>
+            <template v-else>
+              <div class="donut" :style="{ background: attendanceBg }">
+                <div class="hole">
+                  <strong>{{ total }}</strong>
+                  <span>Team Members</span>
+                </div>
               </div>
 
-              <div class="legend-item">
-                <span class="legend-dot absent-dot"></span>
-                <span>Absent</span>
-                <strong>{{ attendanceStats.absent }}</strong>
-                <small>{{ team.length ? Math.round((attendanceStats.absent / team.length) * 100) : 0 }}%</small>
-              </div>
-
-              <div class="legend-item">
-                <span class="legend-dot leave-dot"></span>
-                <span>On Leave</span>
-                <strong>{{ attendanceStats.onLeave }}</strong>
-                <small>{{ team.length ? Math.round((attendanceStats.onLeave / team.length) * 100) : 0 }}%</small>
-              </div>
-
-              <div class="legend-item">
-                <span class="legend-dot half-dot"></span>
-                <span>Half Day</span>
-                <strong>{{ attendanceStats.halfDay }}</strong>
-                <small>{{ team.length ? Math.round((attendanceStats.halfDay / team.length) * 100) : 0 }}%</small>
-              </div>
-            </div>
+              <ul class="legend">
+                <li v-for="r in attendanceLegend" :key="r.label">
+                  <i :style="{ background: r.c }"></i>
+                  <span class="lg-label">{{ r.label }}</span>
+                  <strong>{{ r.v }}</strong>
+                  <small>{{ pctOf(r.v, total) }}%</small>
+                </li>
+              </ul>
+            </template>
           </div>
         </div>
 
-        <!-- TIMESHEETS -->
-        <div class="dashboard-card">
-          <div class="card-heading">
-            <div>
-              <h3>Timesheet Overview</h3>
-              <p>Timesheet activity across your team</p>
-            </div>
+        <!-- Timesheets -->
+        <div class="dashboard-card ts-card">
+          <div class="oc-head">
+            <h3>Timesheet Completion</h3>
           </div>
 
-          <div v-if="timesheetLoading" class="empty-state">
-            Loading timesheets...
-          </div>
-
-          <div v-else class="timesheet-overview">
-            <div
-              class="timesheet-ring"
-              :style="{
-                '--completion': timesheetStats.total
-                  ? Math.round((timesheetStats.submitted / timesheetStats.total) * 100)
-                  : 0
-              }"
-            >
-              <div class="ring-value">
-                <strong>
-                  {{ timesheetStats.total
-                    ? Math.round((timesheetStats.submitted / timesheetStats.total) * 100)
-                    : 0 }}%
-                </strong>
-                <span>Submitted</span>
-              </div>
-            </div>
-
-            <div class="timesheet-status-list">
-              <div>
-                <span>Submitted</span>
-                <strong class="status-green">{{ timesheetStats.submitted }}</strong>
+          <div class="oc-body">
+            <div v-if="timesheetLoading" class="empty-state">Loading timesheets...</div>
+            <template v-else>
+              <div class="donut" :style="{ background: timesheetBg }">
+                <div class="hole">
+                  <strong>{{ timesheetPct }}%</strong>
+                  <span>{{ timesheetStats.submitted }} / {{ total }}<br />Submitted</span>
+                </div>
               </div>
 
-              <div>
-                <span>Pending</span>
-                <strong class="status-amber">{{ timesheetStats.draft }}</strong>
-              </div>
+              <div class="legend-wrap">
+                <ul class="legend">
+                  <li>
+                    <i style="background: #2563eb"></i>
+                    <span class="lg-label">Submitted</span>
+                    <b>{{ timesheetStats.submitted }} ({{ pctOf(timesheetStats.submitted, total) }}%)</b>
+                  </li>
+                  <li>
+                    <i style="background: #93c5fd"></i>
+                    <span class="lg-label">Pending</span>
+                    <b>{{ timesheetStats.pending }} ({{ pctOf(timesheetStats.pending, total) }}%)</b>
+                  </li>
+                  <li>
+                    <i style="background: #9ca3af"></i>
+                    <span class="lg-label">Not Started</span>
+                    <b>{{ timesheetStats.notStarted }} ({{ pctOf(timesheetStats.notStarted, total) }}%)</b>
+                  </li>
+                </ul>
 
-              <div>
-                <span>Cancelled</span>
-                <strong class="status-red">{{ timesheetStats.cancelled }}</strong>
+                <button type="button" class="ts-view-btn" @click="openTimesheets()">
+                  View Timesheets →
+                </button>
               </div>
-            </div>
+            </template>
           </div>
         </div>
 
-        <!-- LEAVE -->
+        <!-- Leave -->
         <div class="dashboard-card">
-          <div class="card-heading">
-            <div>
-              <h3>Leave Overview</h3>
-              <p>Approved leave by type</p>
-            </div>
+          <div class="oc-head">
+            <h3>Leave Overview (This Month)</h3>
+            <p>Approved leave days by type</p>
           </div>
 
-          <div class="leave-overview">
-            <div v-if="monthlyLeaveTypes.length" class="leave-bars">
-              <div
-                v-for="item in monthlyLeaveTypes"
-                :key="item.type"
-                class="leave-bar-row"
-              >
-                <span>{{ item.type }}</span>
+          <div class="oc-body">
+            <div v-if="monthlyLeaveTypes.length" class="leave-chart">
+              <div class="leave-axis">
+                <span v-for="t in leaveTicks" :key="t">{{ t }}</span>
+              </div>
 
-                <div class="leave-bar-track">
-                  <div
-                    class="leave-bar-fill purple-fill"
-                    :style="{ width: item.percentage + '%' }"
-                  ></div>
+              <div class="leave-plot">
+                <div class="leave-grid">
+                  <i v-for="t in leaveTicks" :key="t"></i>
                 </div>
 
-                <strong>{{ item.days }}</strong>
+                <div class="leave-bars-row">
+                  <div
+                    v-for="item in monthlyLeaveTypes"
+                    :key="item.type"
+                    class="leave-col"
+                    :title="item.type + ': ' + item.days + ' day(s)'"
+                  >
+                    <span class="leave-val">{{ item.days }}</span>
+                    <div
+                      class="leave-bar"
+                      :style="{ height: (item.days / leaveTop) * 120 + 'px', background: item.color }"
+                    ></div>
+                    <span class="leave-key">{{ item.key }}</span>
+                  </div>
+                </div>
               </div>
             </div>
-
-            <div v-else class="empty-state">
-              No approved leave this month.
-            </div>
+            <div v-else class="empty-state">No approved leave this month.</div>
           </div>
         </div>
-
       </section>
 
       <!-- TEAM MEMBERS -->
       <section class="team-members-card">
-
         <div class="members-header">
           <div>
             <h3>Team Members</h3>
             <p>View attendance, timesheet and leave information for your team.</p>
           </div>
-
-          <div class="members-actions">
-            <button
-              type="button"
-              :class="{ active: selected === 'members' }"
-              @click="pick('members')"
-            >
-              All Members
-            </button>
-
-            <button
-              type="button"
-              :class="{ active: selected === 'onleave' }"
-              @click="pick('onleave')"
-            >
-              On Leave
-            </button>
-
-            <button
-              type="button"
-              :class="{ active: selected === 'pending' }"
-              @click="pick('pending')"
-            >
-              Pending
-            </button>
-          </div>
         </div>
 
-        <!-- SEARCH / FILTER BAR -->
         <div class="table-toolbar">
-          <div class="search-box">
-            <span>⌕</span>
-            <input
-              type="text"
-              placeholder="Search team members..."
-            />
+          <div class="tab-row">
+            <button
+              v-for="t in tabs"
+              :key="t.key"
+              type="button"
+              :class="{ active: tab === t.key }"
+              @click="tab = t.key"
+            >
+              {{ t.label }}
+            </button>
           </div>
 
           <div class="toolbar-actions">
-            <button type="button">Filter</button>
-            <button type="button">Export</button>
+            <div class="search-box">
+              <span>⌕</span>
+              <input v-model="search" type="text" placeholder="Search team members..." />
+            </div>
+            <button type="button" @click="exportCsv">Export</button>
           </div>
         </div>
 
-        <!-- ATTENDANCE TABLE -->
         <div class="table-container">
           <table class="members-table">
             <thead>
               <tr>
+                <th class="chk">
+                  <input type="checkbox" :checked="allSelected" @change="toggleAll" />
+                </th>
                 <th>Employee</th>
-                <th>Status Today</th>
-                <th>Timesheets</th>
+                <th>Designation</th>
+                <th>Status (Today)</th>
+                <th>This Week Hours</th>
+                <th>Timesheet Status</th>
                 <th>Leave Balance</th>
-                <th>Action</th>
+                <th>Actions</th>
               </tr>
             </thead>
 
             <tbody>
-              <tr
-                v-for="member in team"
-                :key="member.id"
-              >
+              <tr v-for="row in filteredRows" :key="row.id">
+                <td class="chk">
+                  <input type="checkbox" :value="row.id" v-model="selectedIds" />
+                </td>
+
                 <td>
                   <div class="employee-cell">
-                    <div class="employee-avatar">
-                      {{ member.name?.charAt(0)?.toUpperCase() || '?' }}
-                    </div>
-
+                    <div class="employee-avatar">{{ row.name?.charAt(0)?.toUpperCase() || '?' }}</div>
                     <div>
-                      <button
-                        type="button"
-                        class="employee-name"
-                        @click="open(member.id)"
-                      >
-                        {{ member.name }}
+                      <button type="button" class="employee-name" @click="open(row.id)">
+                        {{ row.name }}
                       </button>
-
-                      <span>{{ member.id }}</span>
+                      <span>{{ row.id }}</span>
                     </div>
                   </div>
                 </td>
 
+                <td>{{ row.designation }}</td>
+
                 <td>
-                  <span
-                    v-if="attendanceRows.find(r => r.id === member.id)"
-                    :class="[
-                      'status-badge',
-                      (attendanceRows.find(r => r.id === member.id)?.status || '')
-                        .toLowerCase()
-                        .replace(/\s+/g, '-')
-                    ]"
-                  >
-                    {{ attendanceRows.find(r => r.id === member.id)?.status }}
-                  </span>
-                  <span v-else class="status-badge not-marked">
-                    Not Marked
-                  </span>
+                  <span class="chip" :class="statusClass(row.status)">● {{ row.status }}</span>
                 </td>
 
                 <td>
-                  <span class="table-number">
-                    {{
-                      timesheetEmployeeRows.find(
-                        r => r.id === member.id
-                      )?.timesheets || 0
-                    }}
-                  </span>
-                </td>
-
-                <td>
-                  <div
-                    v-if="member.ok && member.balances.length"
-                    class="balance-cell"
-                  >
-                    <div
-                      v-for="balance in member.balances.slice(0, 2)"
-                      :key="balance.type"
-                    >
-                      <div class="balance-line">
-                        <span>{{ balance.type }}</span>
-                        <strong>
-                          {{ balance.remaining_leaves }}
-                        </strong>
-                      </div>
-
-                      <div class="balance-bar">
-                        <div
-                          :style="{
-                            width: pct(balance) + '%'
-                          }"
-                        ></div>
-                      </div>
-                    </div>
+                  <div class="hours-cell">
+                    <span>{{ row.hours }} / {{ weekTarget }}</span>
+                    <div class="mini-bar"><i :style="{ width: row.hoursPct + '%' }"></i></div>
+                    <small>{{ row.hoursPct }}%</small>
                   </div>
-
-                  <span
-                    v-else-if="member.ok"
-                    class="muted-text"
-                  >
-                    No leave allocated
-                  </span>
-
-                  <span
-                    v-else
-                    class="muted-text"
-                  >
-                    Unavailable
-                  </span>
                 </td>
 
                 <td>
-                  <button
-                    type="button"
-                    class="view-button"
-                    @click="open(member.id)"
-                  >
-                    View
-                  </button>
+                  <span class="chip" :class="tsClass(row.tsStatus)">{{ row.tsStatus }}</span>
+                </td>
+
+                <td>
+                  <div v-if="row.balances.length" class="balance-chips">
+                    <span v-for="b in row.balances" :key="b.type" :title="b.type">
+                      {{ abbr(b.type) }} <strong>{{ b.remaining_leaves }}</strong>
+                    </span>
+                  </div>
+                  <span v-else-if="row.balanceOk" class="muted-text">No leave allocated</span>
+                  <span v-else class="muted-text">Unavailable</span>
+                </td>
+
+                <td>
+                  <div class="action-group">
+                    <button type="button" class="view-button" @click="open(row.id)">View</button>
+                    <button type="button" class="view-button" @click="openTimesheets(row.id)">
+                      Timesheets
+                    </button>
+                  </div>
                 </td>
               </tr>
 
-              <tr v-if="!team.length">
-                <td colspan="5" class="empty-table">
-                  No team members found.
-                </td>
+              <tr v-if="!filteredRows.length">
+                <td colspan="8" class="empty-table">No team members found.</td>
               </tr>
             </tbody>
           </table>
         </div>
-
       </section>
-
-
     </template>
+
+    <!-- TEAM TIMESHEETS POPUP -->
+    <Teleport to="body">
+      <div v-if="tsOpen" class="ts-overlay" @click.self="closeTimesheets">
+        <div class="ts-modal" role="dialog" aria-label="Team timesheets">
+          <div class="ts-head">
+            <div>
+              <h3>Team Timesheets</h3>
+              <p>
+                {{ tsRange === 'week' ? rangeLabel : 'All time' }} ·
+                {{ tsFiltered.length }} timesheet(s) · {{ tsTotalHours }} hrs
+              </p>
+            </div>
+            <button type="button" class="ts-close" @click="closeTimesheets">✕</button>
+          </div>
+
+          <div class="ts-filters">
+            <select v-model="tsEmployee">
+              <option value="all">All team members</option>
+              <option v-for="m in team" :key="m.id" :value="m.id">{{ m.name }}</option>
+            </select>
+
+            <div class="ts-toggle">
+              <button type="button" :class="{ on: tsRange === 'week' }" @click="tsRange = 'week'">
+                This week
+              </button>
+              <button type="button" :class="{ on: tsRange === 'all' }" @click="tsRange = 'all'">
+                All time
+              </button>
+            </div>
+          </div>
+
+          <p v-if="tsErr" class="error-message ts-error">{{ tsErr }}</p>
+
+          <div class="ts-body">
+            <p v-if="tsLoading" class="ts-empty">Loading timesheets...</p>
+            <p v-else-if="!tsFiltered.length" class="ts-empty">
+              No timesheets found for this selection.
+            </p>
+
+            <table v-else class="ts-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Employee</th>
+                  <th>Timesheet</th>
+                  <th>Period</th>
+                  <th>Hours</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="r in tsFiltered" :key="r.name">
+                  <tr class="ts-row" @click="toggleLogs(r.name)">
+                    <td class="ts-arrow">{{ expanded === r.name ? '▾' : '▸' }}</td>
+                    <td>
+                      <strong>{{ r.employee_name }}</strong>
+                      <small>{{ r.employee }}</small>
+                    </td>
+                    <td>{{ r.name }}</td>
+                    <td>{{ fmt(r.start_date) }} – {{ fmt(r.end_date) }}</td>
+                    <td>{{ Number(r.total_hours || 0).toFixed(2) }}</td>
+                    <td><span class="chip" :class="tsChip(r.status)">{{ r.status }}</span></td>
+                  </tr>
+
+                  <tr v-if="expanded === r.name" class="ts-logs-row">
+                    <td colspan="6">
+                      <p v-if="logsLoading === r.name" class="ts-empty small">Loading time logs...</p>
+                      <p v-else-if="!(logsByName[r.name] || []).length" class="ts-empty small">
+                        No time logs in this timesheet.
+                      </p>
+                      <table v-else class="ts-inner">
+                        <thead>
+                          <tr>
+                            <th>Activity</th>
+                            <th>Project</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Hours</th>
+                            <th>Description</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(l, i) in logsByName[r.name]" :key="i">
+                            <td>{{ l.activity_type || '—' }}</td>
+                            <td>{{ l.project || '—' }}</td>
+                            <td>{{ l.from_time || '—' }}</td>
+                            <td>{{ l.to_time || '—' }}</td>
+                            <td>{{ Number(l.hours || 0).toFixed(2) }}</td>
+                            <td>{{ l.description || '—' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+/* The parent page (ManageMyTeam) owns the page padding — none here */
 .team-dashboard {
   width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 22px 28px 36px;
+  max-width: none;
+  margin: 0;
+  padding: 0;
   box-sizing: border-box;
   color: #172033;
 }
 
+/* neutralise global text-align leaks */
+.team-dashboard,
+.team-dashboard * {
+  text-align: left;
+}
+
+.team-dashboard .hole,
+.team-dashboard .hole *,
+.team-dashboard .empty-state,
+.team-dashboard .empty-table,
+.team-dashboard .leave-col,
+.team-dashboard .leave-col * {
+  text-align: center;
+}
+
+/* ===== HEADER ===== */
 .dashboard-header {
   display: flex;
+  flex-wrap: nowrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.dashboard-header > div:first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 .dashboard-header h2 {
   margin: 0;
-  color: #172033;
-  font-size: 27px;
+  font-size: 28px;
   line-height: 1.2;
   font-weight: 700;
 }
@@ -1035,38 +1067,44 @@ const detail = computed(() => {
 .header-date {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
+.range-pill,
 .header-date input,
-.header-date button,
-.toolbar-actions button,
-.members-actions button,
-.secondary-action,
-.view-button,
-.primary-action,
-.close-action {
-  font: inherit;
-}
-
-.header-date input {
-  height: 36px;
-  padding: 0 11px;
-  border: 1px solid #dce2ec;
-  border-radius: 8px;
-  background: #fff;
-  color: #374151;
-  font-size: 12px;
-}
-
 .header-date button {
   height: 36px;
-  padding: 0 13px;
+  box-sizing: border-box;
   border: 1px solid #dce2ec;
   border-radius: 8px;
   background: #fff;
   color: #475569;
+  font: inherit;
   font-size: 12px;
+}
+
+.range-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.header-date input {
+  width: 140px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+}
+
+.header-date button {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0 13px;
   cursor: pointer;
 }
 
@@ -1075,83 +1113,82 @@ const detail = computed(() => {
 }
 
 .error-message {
-  margin: 0 0 18px;
-  padding: 12px 14px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
   border-radius: 8px;
   background: #fef2f2;
   color: #b91c1c;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .loading-message {
-  padding: 30px 0;
   color: #64748b;
-  text-align: center;
+  font-size: 13px;
 }
 
-/* SUMMARY */
+/* ===== GRIDS ===== */
+.summary-grid,
+.overview-grid {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 20px;
+  align-items: stretch;
+}
 
 .summary-grid {
-  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 14px;
 }
 
+.overview-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* ===== SUMMARY CARDS ===== */
 .summary-card {
   display: flex;
   align-items: center;
-  gap: 13px;
-  min-height: 100px;
-  padding: 16px;
+  align-self: stretch;
+  gap: 14px;
+  width: 100%;
+  min-height: 118px;
+  margin: 0;
+  padding: 20px;
   box-sizing: border-box;
   border: 1px solid #e6eaf0;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 2px 7px rgba(15, 23, 42, .045);
-  text-align: left;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  font: inherit;
   cursor: pointer;
-  transition: transform .18s ease, box-shadow .18s ease;
+  transform: none;
 }
 
 .summary-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(15, 23, 42, .07);
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.09);
 }
 
 .summary-icon {
   display: grid;
   place-items: center;
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
-  font-size: 18px;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  font-size: 20px;
   font-weight: 700;
 }
 
-.blue-icon {
-  background: #eef2ff;
-  color: #4f46e5;
-}
-
-.green-icon {
-  background: #ecfdf3;
-  color: #16a34a;
-}
-
-.purple-icon {
-  background: #f3e8ff;
-  color: #7c3aed;
-}
-
-.red-icon {
-  background: #fef2f2;
-  color: #dc2626;
-}
+.blue-icon { background: #eef2ff; color: #4f46e5; }
+.green-icon { background: #ecfdf3; color: #16a34a; }
+.amber-icon { background: #fff7e6; color: #d97706; }
+.red-icon { background: #fef2f2; color: #dc2626; }
 
 .summary-content {
   min-width: 0;
+}
+
+.summary-content.grow {
+  flex: 1;
 }
 
 .summary-content span,
@@ -1161,465 +1198,408 @@ const detail = computed(() => {
 
 .summary-content span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
 }
 
 .summary-content strong {
   display: block;
-  margin: 4px 0 3px;
+  margin: 4px 0;
   color: #172033;
-  font-size: 26px;
-  line-height: 1;
+  font-size: 27px;
+  line-height: 1.1;
+}
+
+.summary-content strong em {
+  float: right;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
 }
 
 .summary-content small {
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 11px;
 }
 
-/* OVERVIEW */
+.summary-content small.up { color: #16a34a; }
+.summary-content small.link { color: #2563eb; }
 
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 14px;
+.mini-bar {
+  flex: 1;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e8ebf0;
 }
 
+.mini-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: #22c55e;
+}
+
+/* ===== OVERVIEW CARDS ===== */
 .dashboard-card,
-.team-members-card,
-.selected-detail {
+.team-members-card {
   border: 1px solid #e6eaf0;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 2px 7px rgba(15, 23, 42, .045);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
 }
 
 .dashboard-card {
-  min-width: 0;
-  height: 220px;
-  padding: 16px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.card-heading {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  margin-bottom: 6px;
-}
-
-.card-heading > div:first-child {
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
+  min-height: 240px;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
-.card-heading h3,
-.members-header h3,
-.detail-header h3 {
+.oc-head {
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.oc-head h3,
+.members-header h3 {
   margin: 0;
-  color: #172033;
   font-size: 16px;
   line-height: 1.25;
   font-weight: 700;
 }
 
-.card-heading p,
-.members-header p,
-.detail-header p {
-  margin: 4px 0 0;
+.oc-head p,
+.members-header p {
+  margin: 5px 0 0;
   color: #8a94a6;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
-.percentage-pill,
-.overview-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 42px;
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 7px;
-  background: #eef2ff;
-  color: #4f46e5;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.purple-count {
-  background: #f3e8ff;
-  color: #7c3aed;
-}
-
-/* ATTENDANCE */
-
-.attendance-card {
-  display: grid !important;
-  grid-template-rows: auto 1fr !important;
-  align-items: stretch !important;
-  width: 100% !important;
-  align-self: stretch !important;
-}
-
-.attendance-card .attendance-overview {
-  display: grid !important;
-  grid-template-columns: 96px minmax(0, 1fr) !important;
-  align-items: center !important;
-  gap: 12px;
-  width: 100%;
-  height: 130px;
-  margin: 0;
-  box-sizing: border-box;
-}
-
-.attendance-card .attendance-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 104px !important;
-  height: 104px !important;
-  margin: 0;
-  border-radius: 50%;
-  background:
-    conic-gradient(
-      #22c55e 0 calc(var(--present-pct) * 1%),
-      #ef4444 0 calc(
-        (var(--present-pct) + var(--absent-pct)) * 1%
-      ),
-      #8b5cf6 0 calc(
-        (var(--present-pct) + var(--absent-pct) + var(--leave-pct)) * 1%
-      ),
-      #f59e0b 0 calc(
-        (var(--present-pct) + var(--absent-pct) + var(--leave-pct) + var(--half-pct)) * 1%
-      ),
-      #e5e7eb 0 100%
-    );
-}
-
-.attendance-card .attendance-ring::before {
-  content: "";
-  position: absolute;
-  inset: 13px;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.attendance-card .ring-value {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.attendance-card .ring-value strong {
-  color: #172033;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.attendance-card .ring-value span {
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 8px;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.attendance-card .legend-list {
-  display: flex !important;
-  flex-direction: column;
-  gap: 0;
-  width: 100%;
-  min-width: 0;
-  padding: 0 !important;
-}
-
-.attendance-card .legend-item {
-  display: grid !important;
-  grid-template-columns: 8px minmax(0, 1fr) 20px 30px !important;
-  align-items: center !important;
-  min-width: 0;
-  min-height: 25px;
-  padding: 0 !important;
-  column-gap: 5px;
-}
-
-.attendance-card .legend-item > span:nth-child(2) {
-  min-width: 0;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.attendance-card .legend-item strong {
-  color: #172033;
-  font-size: 10px;
-  font-weight: 600;
-  text-align: right;
-}
-
-.attendance-card .legend-item small {
-  color: #64748b;
-  font-size: 9px;
-  text-align: right;
-}
-
-/* TIMESHEET */
-
-.timesheet-overview {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  min-height: 130px;
-}
-
-.timesheet-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 104px;
-  height: 104px;
-  border-radius: 50%;
-  background:
-    conic-gradient(
-      #2563eb calc(var(--completion, 0) * 1%),
-      #e8eef8 0
-    );
-}
-
-.timesheet-ring::before {
-  content: "";
-  position: absolute;
-  inset: 13px;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.timesheet-ring .ring-value {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: auto;
-  text-align: center;
-}
-
-.timesheet-ring .ring-value strong {
-  display: block;
-  margin: 0;
-  font-size: 18px;
-  line-height: 1;
-}
-
-.timesheet-ring .ring-value span {
-  display: block;
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 8px;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.timesheet-status-list {
-  width: 100%;
-  min-width: 0;
-}
-
-.timesheet-status-list > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  min-height: 29px;
-  padding: 4px 0;
-  border-bottom: 1px solid #f0f2f6;
-  color: #64748b;
-  font-size: 10px;
-}
-
-.timesheet-status-list > div:last-child {
-  border-bottom: 0;
-}
-
-.timesheet-status-list > div strong {
-  min-width: 20px;
-  text-align: right;
-  font-size: 11px;
-}
-
-.status-green {
-  color: #16a34a !important;
-}
-
-.status-amber {
-  color: #d97706 !important;
-}
-
-.status-red {
-  color: #dc2626 !important;
-}
-
-/* LEAVE */
-
-.leave-overview {
+.oc-body {
+  flex: 1;
   display: flex;
   align-items: center;
-  min-height: 130px;
-  margin: 0;
-}
-
-.leave-bars {
+  gap: 24px;
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.leave-bar-row {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 20px;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-}
-
-.leave-bar-row > span {
-  color: #64748b;
-  white-space: nowrap;
-}
-
-.leave-bar-row > strong {
-  color: #172033;
-  font-size: 11px;
-  text-align: right;
-}
-
-.leave-bar-track {
-  width: 100%;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #edf0f4;
-}
-
-.leave-bar-fill {
-  height: 100%;
   min-width: 0;
-  border-radius: 999px;
-  transition: width .2s ease;
-}
-
-.purple-fill {
-  background: #8b5cf6;
-}
-
-.amber-fill {
-  background: #f59e0b;
-}
-
-.green-fill {
-  background: #22c55e;
+  margin-top: 10px;
 }
 
 .empty-state {
+  flex: 1;
   display: grid;
   place-items: center;
-  min-height: 130px;
+  min-height: 120px;
   color: #94a3b8;
-  font-size: 11px;
-  text-align: center;
+  font-size: 12px;
 }
 
-/* TEAM MEMBERS */
+/* donut */
+.donut {
+  display: grid;
+  place-items: center;
+  flex: 0 0 130px;
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+}
 
+.hole {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 94px;
+  height: 94px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.hole strong {
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.hole span {
+  margin-top: 4px;
+  padding: 0 6px;
+  color: #8a94a6;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+/* legend (shared) */
+.legend {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.lg-label {
+  color: #64748b;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.legend strong {
+  color: #172033;
+  font-size: 13px;
+  text-align: right;
+}
+
+.legend small {
+  color: #64748b;
+  font-size: 11.5px;
+  text-align: right;
+}
+
+/* ===== Attendance card ===== */
+.attendance-card .oc-body {
+  justify-content: center;
+  gap: 32px;
+}
+
+.attendance-card .legend {
+  flex: 0 1 230px;
+  max-width: 230px;
+  width: 100%;
+}
+
+.attendance-card .legend li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 28px 40px;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  border-bottom: 1px solid #f1f3f7;
+}
+
+.attendance-card .legend li:last-child {
+  border-bottom: 0;
+}
+
+/* ===== Timesheet Completion card ===== */
+.ts-card .oc-body {
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.ts-card .donut {
+  flex: 0 0 132px;
+  width: 132px;
+  height: 132px;
+}
+
+.ts-card .hole {
+  width: 92px;
+  height: 92px;
+}
+
+.ts-card .legend-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.ts-card .legend li {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.ts-card .lg-label {
+  color: #334155;
+}
+
+.ts-card .legend b {
+  color: #172033;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ts-view-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 100%;
+  height: 36px;
+  margin: 14px 0 0;
+  padding: 0 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #fff;
+  color: #2563eb;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.ts-view-btn:hover {
+  background: #eff6ff;
+}
+
+/* ===== Leave chart ===== */
+.leave-chart {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 6px;
+}
+
+.leave-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 120px;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1;
+  text-align: right;
+}
+
+.leave-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 22px;
+}
+
+.leave-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.leave-grid i {
+  display: block;
+  height: 0;
+  border-top: 1px dashed #e6eaf0;
+}
+
+.leave-bars-row {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 26px;
+  height: 120px;
+}
+
+.leave-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 120px;
+  min-width: 36px;
+}
+
+.leave-bar {
+  width: 36px;
+  border-radius: 4px 4px 0 0;
+}
+
+.leave-val {
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.leave-key {
+  position: absolute;
+  bottom: -20px;
+  color: #64748b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ===== TEAM MEMBERS ===== */
 .team-members-card {
-  padding: 18px;
+  padding: 20px;
   box-sizing: border-box;
 }
 
 .members-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
   margin-bottom: 14px;
 }
-
-.members-header > div:first-child {
-  min-width: 0;
-}
-
-.members-header h3 {
-  margin: 0;
-  color: #172033;
-  font-size: 16px;
-  line-height: 1.25;
-  font-weight: 700;
-}
-
-.members-header p {
-  margin: 5px 0 0;
-  color: #8a94a6;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.members-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 8px;
-  background: #f1f3f7;
-  flex-shrink: 0;
-}
-
-.members-actions button {
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.members-actions button:hover,
-.members-actions button.active {
-  background: #fff;
-  color: #4338ca;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, .08);
-}
-
-/* SEARCH / FILTER */
 
 .table-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+  border-bottom: 1px solid #e6eaf0;
+}
+
+.tab-row {
+  display: flex;
+  gap: 4px;
+}
+
+.tab-row button {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-row button.active {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 
 .search-box {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 275px;
+  width: 240px;
   height: 34px;
   padding: 0 10px;
   box-sizing: border-box;
@@ -1630,48 +1610,29 @@ const detail = computed(() => {
 
 .search-box span {
   color: #94a3b8;
-  font-size: 15px;
-  line-height: 1;
+  font-size: 16px;
 }
 
 .search-box input {
   width: 100%;
-  min-width: 0;
-  padding: 0;
+  max-width: none;
   border: 0;
   outline: 0;
-  background: transparent;
   color: #334155;
   font-size: 11px;
 }
 
-.search-box input::placeholder {
-  color: #9aa3b2;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.toolbar-actions button {
+.toolbar-actions > button {
   height: 34px;
-  padding: 0 13px;
+  padding: 0 14px;
   border: 1px solid #dfe4ec;
   border-radius: 7px;
   background: #fff;
   color: #475569;
+  font: inherit;
   font-size: 11px;
-  font-weight: 500;
   cursor: pointer;
 }
-
-.toolbar-actions button:hover {
-  background: #f8fafc;
-}
-
-/* TABLE */
 
 .table-container {
   width: 100%;
@@ -1681,12 +1642,11 @@ const detail = computed(() => {
 .members-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
 }
 
 .members-table th,
 .members-table td {
-  padding: 10px 12px;
+  padding: 11px 12px;
   border-bottom: 1px solid #edf0f4;
   text-align: left;
   vertical-align: middle;
@@ -1695,54 +1655,24 @@ const detail = computed(() => {
 .members-table th {
   background: #fafbfc;
   color: #7b8494;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .04em;
+  white-space: nowrap;
 }
 
 .members-table td {
-  height: 58px;
   color: #475569;
-  font-size: 11px;
+  font-size: 12px;
 }
 
-.members-table th:nth-child(1),
-.members-table td:nth-child(1) {
-  width: 29%;
+.chk {
+  width: 32px;
 }
-
-.members-table th:nth-child(2),
-.members-table td:nth-child(2) {
-  width: 15%;
-}
-
-.members-table th:nth-child(3),
-.members-table td:nth-child(3) {
-  width: 13%;
-}
-
-.members-table th:nth-child(4),
-.members-table td:nth-child(4) {
-  width: 30%;
-}
-
-.members-table th:nth-child(5),
-.members-table td:nth-child(5) {
-  width: 13%;
-}
-
-.members-table tbody tr:hover {
-  background: #fafbff;
-}
-
-/* EMPLOYEE */
 
 .employee-cell {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-width: 0;
+  gap: 10px;
 }
 
 .employee-avatar {
@@ -1754,241 +1684,344 @@ const detail = computed(() => {
   border-radius: 50%;
   background: #eef2ff;
   color: #4f46e5;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-}
-
-.employee-cell > div:last-child {
-  min-width: 0;
 }
 
 .employee-name {
   display: block;
-  max-width: 100%;
   padding: 0;
-  overflow: hidden;
   border: 0;
   background: transparent;
-  color: #334155;
-  font-size: 11px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
   font-weight: 700;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   cursor: pointer;
-}
-
-.employee-name:hover {
-  color: #4f46e5;
 }
 
 .employee-cell span {
   display: block;
   margin-top: 2px;
   color: #9aa3b2;
-  font-size: 9px;
-}
-
-/* STATUS */
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 8px;
-  border-radius: 99px;
-  background: #eef2f7;
-  color: #64748b;
-  font-size: 9px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.status-badge.present,
-.status-badge.approved,
-.status-badge.available {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.status-badge.absent,
-.status-badge.rejected {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.status-badge.on-leave {
-  background: #ede9fe;
-  color: #6d28d9;
-}
-
-.status-badge.half-day {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.status-badge.not-marked {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.table-number {
-  color: #334155;
-  font-weight: 600;
-}
-
-/* LEAVE BALANCE */
-
-.balance-cell {
-  min-width: 0;
-}
-
-.balance-cell > div {
-  margin-bottom: 6px;
-}
-
-.balance-cell > div:last-child {
-  margin-bottom: 0;
-}
-
-.balance-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 3px;
-  color: #64748b;
-  font-size: 9px;
-}
-
-.balance-line strong {
-  color: #334155;
-  font-weight: 600;
-}
-
-.balance-bar {
-  width: 100%;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: #e8ebf0;
-}
-
-.balance-bar div {
-  height: 100%;
-  border-radius: 99px;
-  background: #6366f1;
-}
-
-.muted-text {
-  color: #9aa3b2;
   font-size: 10px;
 }
 
-/* ACTION */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip.g { background: #dcfce7; color: #15803d; }
+.chip.r { background: #fee2e2; color: #b91c1c; }
+.chip.o { background: #fef3c7; color: #b45309; }
+.chip.p { background: #ede9fe; color: #6d28d9; }
+.chip.b { background: #dbeafe; color: #1d4ed8; }
+
+.hours-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.hours-cell .mini-bar {
+  flex: 0 0 80px;
+}
+
+.hours-cell .mini-bar i {
+  background: #2563eb;
+}
+
+.hours-cell small {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.balance-chips {
+  display: flex;
+  gap: 12px;
+  color: #64748b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.balance-chips strong {
+  color: #334155;
+}
+
+.muted-text {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.action-group {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
 
 .view-button {
   height: 28px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid #dce2ec;
   border-radius: 6px;
   background: #fff;
   color: #4f46e5;
-  font-size: 10px;
+  font: inherit;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-}
-
-.view-button:hover {
-  background: #eef2ff;
 }
 
 .empty-table {
-  padding: 30px !important;
-  color: #94a3b8 !important;
-  text-align: center !important;
+  padding: 28px;
+  color: #94a3b8;
+  text-align: center;
 }
 
-/* SELECTED DETAILS */
-
-.selected-detail {
-  margin-top: 20px;
-  padding: 20px;
-}
-
-.detail-header {
+/* ===== Team timesheets popup ===== */
+.ts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.ts-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1000px;
+  max-height: 86vh;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+  color: #172033;
+  text-align: left;
+}
+
+.ts-head {
+  display: flex;
   align-items: flex-start;
-  gap: 15px;
-  margin-bottom: 15px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 12px;
 }
 
-.detail-actions {
-  display: flex;
-  gap: 8px;
+.ts-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
 }
 
-.primary-action,
-.close-action {
-  height: 36px;
-  padding: 0 13px;
-  border-radius: 7px;
+.ts-head p {
+  margin: 5px 0 0;
+  color: #718096;
+  font-size: 12px;
+}
+
+.ts-close {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #64748b;
   cursor: pointer;
+}
+
+.ts-error {
+  margin: 0 24px 8px;
+}
+
+.ts-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 24px 14px;
+  border-bottom: 1px solid #e6eaf0;
+}
+
+.ts-filters select {
+  width: 240px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ts-toggle {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #f1f3f7;
+}
+
+.ts-toggle button {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
   font-size: 12px;
   font-weight: 600;
-}
-
-.primary-action {
-  border: 0;
-  background: #4f46e5;
-  color: #fff;
-}
-
-.primary-action:hover {
-  background: #4338ca;
-}
-
-.close-action {
-  border: 1px solid #dce2ec;
-  background: #fff;
-  color: #475569;
-}
-
-.detail-list {
-  border-top: 1px solid #edf0f4;
-}
-
-.detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 15px;
-  padding: 13px 4px;
-  border-bottom: 1px solid #edf0f4;
   cursor: pointer;
 }
 
-.detail-row:hover {
-  background: #fafbff;
+.ts-toggle button.on {
+  background: #fff;
+  color: #2563eb;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
 }
 
-.detail-row strong,
-.detail-row span {
-  display: block;
+.ts-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 24px 24px;
 }
 
-.detail-row strong {
-  color: #334155;
+.ts-empty {
+  padding: 36px 0;
+  color: #94a3b8;
+  font-size: 13px;
+  text-align: center;
+}
+
+.ts-empty.small {
+  padding: 14px 0;
+}
+
+.ts-table,
+.ts-inner {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ts-table th,
+.ts-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid #edf0f4;
+  color: #475569;
   font-size: 12px;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.detail-row div span {
-  margin-top: 3px;
-  color: #8a94a6;
+.ts-table th {
+  position: sticky;
+  top: 0;
+  background: #fafbfc;
+  color: #7b8494;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ts-table td strong {
+  display: block;
+  color: #172033;
+}
+
+.ts-table td small {
+  color: #9aa3b2;
+  font-size: 10px;
+}
+
+.ts-row {
+  cursor: pointer;
+}
+
+.ts-row:hover {
+  background: #f8fafc;
+}
+
+.ts-arrow {
+  width: 22px;
+  color: #94a3b8;
+}
+
+.ts-logs-row > td {
+  padding: 0 10px 14px 32px !important;
+  background: #f8fafc;
+}
+
+.ts-inner th,
+.ts-inner td {
+  position: static;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e8ecf2;
+  background: transparent;
   font-size: 11px;
+  text-align: left;
 }
 
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1250px) {
+  .attendance-card .oc-body,
+  .ts-card .oc-body {
+    gap: 18px;
+  }
 
+  .attendance-card .legend {
+    flex-basis: 190px;
+  }
+}
 
+@media (max-width: 1100px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 750px) {
+  .dashboard-header,
+  .table-toolbar {
+    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .header-date {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .search-box {
+    flex: 1;
+    width: auto;
+  }
+
+  .tab-row {
+    overflow-x: auto;
+  }
+}
 </style>

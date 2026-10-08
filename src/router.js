@@ -3,6 +3,8 @@ import HRRequests from './views/HR/HRRequests.vue'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { loadRoles, isManager, isHR } from './api'
+import HREmployeeDirectory from './views/HR/HREmployeeDirectory.vue'
+import HRReports from './views/HR/HRReports.vue'
 
 import Login from './views/Login.vue'
 import Home from './views/Home.vue'
@@ -16,7 +18,9 @@ import Approvals from './views/Approvals.vue'
 import Team from './views/Team.vue'
 import EmployeeDetail from './views/EmployeeDetail.vue'
 
-import HRDashboard from './views/HR/HR.vue'
+import HRDashboard from './views/HRDashboard.vue'
+import HRTasks from './views/HR/HRTasks.vue'
+import HROnboardingForm from './components/hr/HROnboardingForm.vue'
 import HRCorrectionRequests from './views/HR/HRCorrectionRequests.vue'
 import ManageMyTeam from './views/ManageMyTeam.vue'
 
@@ -134,13 +138,42 @@ const router = createRouter({
     },
 
     {
+      path: '/hr-tasks/onboarding/new',
+      component: HROnboardingForm,
+      meta: {
+        auth: true,
+        hr: true
+      }
+    },
+
+    {
+      path: '/hr-tasks',
+      component: HRTasks,
+      meta: {
+        auth: true,
+        hr: true
+      }
+    },
+
+    {
       path: '/hr/employee/:id',
       component: EmployeeDetail,
       meta: {
         auth: true,
         hr: true
       }
-    }
+    },
+    {
+      path: '/hr/employees',
+      component: HREmployeeDirectory,
+      meta: { auth: true, hr: true }
+    },
+
+    {
+      path: '/hr/reports',
+      component: HRReports,
+      meta: { auth: true, hr: true }
+    },
   ]
 })
 

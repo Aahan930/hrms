@@ -12,6 +12,11 @@ defineProps({
     required: true
   },
 
+  dayLabel: {
+    type: String,
+    default: ''
+  },
+
   entriesCount: {
     type: Number,
     required: true
@@ -58,225 +63,197 @@ function createActivity() {
 </script>
 
 <template>
-  <div class="entry-card">
-    <div class="entry-grid">
+  <div class="entry-row">
 
-      <!-- Project -->
-      <div class="form-field">
-        <label>Project</label>
+    <!-- PROJECT / TASK -->
+    <div class="entry-cell project-cell">
+      <ProjectSelector
+        :model-value="entry.project"
+        :show-create="false"
+        @update:model-value="
+          update('project', $event)
+        "
+      />
+    </div>
 
-        <ProjectSelector
-          :model-value="entry.project"
-          @update:model-value="
-            update('project', $event)
-          "
-        />
-      </div>
-
-      <!-- Deliverables -->
-      <div class="form-field">
-        <label>Deliverables</label>
-
-        <input
-          :value="entry.deliverables"
-          type="text"
-          maxlength="255"
-          placeholder="Enter deliverable"
-          @input="
-            update(
-              'deliverables',
-              $event.target.value
-            )
-          "
-        />
-      </div>
-
-      <!-- Activity Type -->
-      <div class="form-field">
-        <label>Activity Type</label>
-
-        <select
-          :value="entry.activity_type"
-          :disabled="activityLoading"
-          @change="
-            update(
-              'activity_type',
-              $event.target.value
-            )
-          "
-        >
-          <option value="">
-            {{
-              activityLoading
-                ? 'Loading Activity Types...'
-                : 'Select Activity Type'
-            }}
-          </option>
-
-          <option
-            v-for="activity in activityTypes"
-            :key="activity.name"
-            :value="activity.name"
-          >
-            {{ activity.name }}
-          </option>
-        </select>
-
-        <button
-          v-if="index === 0"
-          type="button"
-          class="create-activity-btn"
-          @click="createActivity"
-        >
-          + Create Activity Type
-        </button>
-
-        <span
-          v-if="activityError && index === 0"
-          class="activity-error"
-        >
-          {{ activityError }}
-        </span>
-      </div>
-
-      <!-- Description -->
-      <div class="form-field">
-        <label>Description</label>
-
-        <input
-          :value="entry.description"
-          type="text"
-          placeholder="Describe the work performed"
-          @input="
-            update(
-              'description',
-              $event.target.value
-            )
-          "
-        />
-      </div>
-
-      <!-- Hours -->
-      <div class="form-field hours-field">
-        <label>Hours</label>
-
-        <input
-          :value="entry.hours || ''"
-          type="number"
-          min="0"
-          step="0.25"
-          placeholder="0"
-          @input="
-            update(
-              'hours',
-              Number($event.target.value) || 0
-            )
-          "
-        />
-      </div>
-
-      <!-- Remove -->
-      <div
-        v-if="entriesCount > 1"
-        class="remove-field"
+    <!-- ACTIVITY TYPE -->
+    <div class="entry-cell activity-cell">
+      <select
+        :value="entry.activity_type"
+        :disabled="activityLoading"
+        @change="
+          update(
+            'activity_type',
+            $event.target.value
+          )
+        "
       >
-        <button
-          type="button"
-          class="remove-entry-btn"
-          aria-label="Remove work entry"
-          @click="remove"
+        <option value="">
+          {{
+            activityLoading
+              ? 'Loading...'
+              : 'Select Activity'
+          }}
+        </option>
+
+        <option
+          v-for="activity in activityTypes"
+          :key="activity.name"
+          :value="activity.name"
         >
-          ×
-        </button>
-      </div>
+          {{ activity.name }}
+        </option>
+      </select>
 
     </div>
+
+    <!-- DELIVERABLES -->
+    <div class="entry-cell deliverables-cell">
+      <input
+        :value="entry.deliverables"
+        type="text"
+        maxlength="255"
+        placeholder="Enter deliverable"
+        @input="
+          update(
+            'deliverables',
+            $event.target.value
+          )
+        "
+      />
+    </div>
+
+    <!-- DESCRIPTION -->
+    <div class="entry-cell description-cell">
+      <input
+        :value="entry.description"
+        type="text"
+        placeholder="Describe work"
+        @input="
+          update(
+            'description',
+            $event.target.value
+          )
+        "
+      />
+    </div>
+
+    <!-- HOURS -->
+    <div class="entry-cell hours-cell">
+      <input
+        :value="entry.hours || ''"
+        type="number"
+        min="0"
+        step="0.25"
+        placeholder="0"
+        @input="
+          update(
+            'hours',
+            Number($event.target.value) || 0
+          )
+        "
+      />
+    </div>
+
+    <!-- REMOVE -->
+    <div class="remove-cell">
+      <button
+        v-if="entriesCount > 1"
+        type="button"
+        class="remove-entry-btn"
+        aria-label="Remove work entry"
+        @click="remove"
+      >
+        ×
+      </button>
+    </div>
+
   </div>
 </template>
 
 <style scoped>
-.entry-card {
-  width: 100%;
-  background: #fff;
-}
-
-.entry-grid {
+.entry-row {
   display: grid;
   grid-template-columns:
-    minmax(180px, 1.15fr)
+    minmax(150px, 1fr)
+    minmax(150px, 1fr)
+    minmax(160px, 1fr)
     minmax(190px, 1.25fr)
-    minmax(175px, 1.1fr)
-    minmax(230px, 1.5fr)
-    95px
+    72px
     42px;
 
+  width: 100%;
+  min-height: 58px;
+
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.entry-cell,
+.remove-cell {
+  min-width: 0;
+  border-right: 1px solid #e7ebf0;
+  box-sizing: border-box;
+}
+
+.entry-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 7px;
+}
+
+.project-cell {
+  padding-left: 10px;
+}
+
+.entry-cell :deep(input),
+.entry-cell :deep(select) {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+
+  border: 1px solid #d9e0e8;
+  border-radius: 4px;
+
+  background: #ffffff;
+  color: #344054;
+
+  font-family: inherit;
+  font-size: 10px;
+  outline: none;
+}
+
+.entry-cell :deep(input) {
+  padding: 0 9px;
+}
+
+.entry-cell :deep(select) {
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.entry-cell :deep(input:focus),
+.entry-cell :deep(select:focus) {
+  border-color: #7da7e8;
+  box-shadow: 0 0 0 2px rgba(40, 116, 232, 0.08);
+}
+
+.activity-cell {
   align-items: stretch;
 }
 
-.form-field {
-  min-width: 0;
-  padding: 12px;
-  border-right: 1px solid #e6eaf0;
-}
-
-.form-field label {
-  display: block;
-  min-height: 14px;
-  margin-bottom: 7px;
-
-  color: #768293;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: .35px;
-  text-transform: uppercase;
-}
-
-.form-field input,
-.form-field select {
-  width: 100%;
-  height: 38px;
-  min-width: 0;
-
-  padding: 7px 9px;
-
-  border: 1px solid #d5dce4;
-  border-radius: 5px;
-
-  background: #fff;
-  color: #303846;
-
-  font: inherit;
-  font-size: 12px;
-}
-
-.form-field input::placeholder {
-  color: #a1aab5;
-}
-
-.form-field input:focus,
-.form-field select:focus {
-  outline: none;
-  border-color: #7899b8;
-  box-shadow: 0 0 0 2px rgba(63, 111, 159, .08);
-}
-
-.hours-field input {
-  text-align: right;
-}
-
 .create-activity-btn {
-  display: block;
-  margin-top: 5px;
+  width: fit-content;
+  margin-top: 3px;
   padding: 0;
-
   border: 0;
   background: transparent;
-
-  color: #3f6f9f;
-  font-size: 10px;
-  font-weight: 600;
-
+  color: #2874e8;
+  font-family: inherit;
+  font-size: 8px;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -285,68 +262,82 @@ function createActivity() {
 }
 
 .activity-error {
-  display: block;
-  margin-top: 4px;
-  color: #b54747;
-  font-size: 10px;
+  margin-top: 2px;
+  color: #d92d20;
+  font-size: 8px;
+  line-height: 1.2;
 }
 
-.remove-field {
+.description-cell {
+  padding-right: 7px;
+}
+
+.hours-cell {
+  align-items: center;
+  justify-content: center;
+  padding: 7px 5px;
+}
+
+.hours-cell :deep(input) {
+  text-align: center;
+  padding: 0 4px;
+}
+
+.remove-cell {
   display: flex;
   align-items: center;
   justify-content: center;
+  border-right: 0;
 }
 
 .remove-entry-btn {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border: 1px solid #d9e0e8;
+  border-radius: 4px;
 
-  border: 1px solid #dce2e8;
-  border-radius: 5px;
+  background: #ffffff;
+  color: #98a2b3;
 
-  background: #fff;
-  color: #8994a1;
-
-  font-family: Arial, sans-serif;
-  font-size: 18px;
+  font-family: inherit;
+  font-size: 15px;
   line-height: 1;
 
   cursor: pointer;
 }
 
 .remove-entry-btn:hover {
-  border-color: #dfb8b8;
-  background: #fff7f7;
-  color: #b54747;
+  border-color: #f0a7a2;
+  color: #d92d20;
+  background: #fff7f6;
 }
 
-@media (max-width: 1100px) {
-  .entry-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .remove-field {
-    justify-content: flex-end;
-    padding: 12px;
+@media (max-width: 900px) {
+  .entry-row {
+    grid-template-columns:
+      minmax(140px, 1fr)
+      minmax(140px, 1fr)
+      minmax(160px, 1fr)
+      64px
+      38px;
   }
 }
 
 @media (max-width: 700px) {
-  .entry-grid {
+  .entry-row {
     grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 8px;
   }
 
-  .form-field {
+  .entry-cell,
+  .remove-cell {
     border-right: 0;
-    border-bottom: 1px solid #e6eaf0;
   }
 
-  .remove-field {
+  .remove-cell {
     justify-content: flex-end;
   }
 }

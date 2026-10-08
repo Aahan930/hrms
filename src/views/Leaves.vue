@@ -1,18 +1,73 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api, { errMsg } from '../api'
-import LeaveStats from '../components/LeaveStats.vue'
 import LeaveTabs from '../components/LeaveTabs.vue'
 import LeaveTable from '../components/LeaveTable.vue'
+import LeaveBalanceView from '../components/leaves/LeaveBalanceView.vue'
+import LeaveTypeIcon from '../components/leaves/LeaveTypeIcon.vue'
 
 const router = useRouter()
 const route = useRoute()
 
 const activeTab = ref('apply')
-const leaves = ref([])
 const leaveTab = ref('All')
 const leaveSearch = ref('')
+
+function iconClass(type) {
+  const classes = {
+    'Birthday & Anniversary Leave': 'birthday',
+    'Personal Time Off': 'personal',
+    'Maternity Leave': 'maternity',
+    'Paternity Leave': 'paternity',
+    'Intern Leave': 'intern',
+    'Carry Forward': 'carry',
+    'Comp Off': 'comp',
+    'Compensatory Off': 'comp',
+    'Optional Leave': 'optional',
+    'Intern Adjustment': 'adjustment',
+    'FTE Adjustment': 'fte',
+    'Casual Leave': 'casual',
+    'Sick Leave': 'sick'
+  }
+
+  return classes[type] || 'default'
+}
+
+const employee = ref(null)
+const balances = ref({})
+const leaves = ref([])
+const cancellationRequests = ref([])
+
+const leaveChoice = ref('')
+const halfDaySession = ref('')
+
+const form = ref({
+  leave_type: '',
+  from_date: '',
+  to_date: '',
+  description: ''
+})
+
+const error = ref('')
+const success = ref('')
+const leavesError = ref('')
+const loading = ref(false)
+const attachment = ref(null)
+const attachmentInput = ref(null)
+const actionBusy = ref(false)
+
+const actionDialog = ref({
+  open: false,
+  type: '',
+  leave: null,
+  reason: ''
+})
+
+const actionDateInput = ref('')
+const actionDateSearch = ref('')
+
+const today = new Date().toLocaleDateString('en-CA')
 
 function applyRouteState() {
   if (route.query.tab === 'actions') {
@@ -22,155 +77,46 @@ function applyRouteState() {
 
   if (route.query.tab === 'my-leaves') {
     activeTab.value = 'my-leaves'
+    leaveTab.value = route.query.status === 'Pending'
+      ? 'Pending'
+      : 'All'
+    return
+  }
 
-    if (route.query.status === 'Pending') {
-      leaveTab.value = 'Pending'
-    } else {
-      leaveTab.value = 'All'
-    }
-
+  if (route.query.tab === 'balance') {
+    activeTab.value = 'balance'
     return
   }
 
   activeTab.value = 'apply'
-  leaveTab.value = 'All'
 }
-const leavesError = ref('')
 
 watch(
   () => route.query,
-  () => applyRouteState(),
+  applyRouteState,
   { immediate: true }
 )
 
-const employee = ref(null)
-const balances = ref({})
-const leaveChoice = ref('')
-const halfDaySession = ref('')
-
-const form = ref({
-  leave_type: '',
-  from_date: '',
-  to_date: '',
-  description: '',
-})
 function label(leave) {
-  return leave.workflow_state || leave.status
+  return leave.workflow_state || leave.status || 'Unknown'
 }
 
 function isFutureLeave(leave) {
-  const now = new Date()
-
-  const today = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0')
-  ].join('-')
-
   return String(leave.from_date || '').slice(0, 10) > today
 }
-
-
-const filteredLeaves = computed(() => {
-  const query = leaveSearch.value.trim().toLowerCase()
-
-  return leaves.value.filter((leave) => {
-    const status = label(leave)
-    const matchesStatus =
-      leaveTab.value === 'All' ||
-      (leaveTab.value === 'Pending' &&
-        ['Pending', 'Open'].includes(status)) ||
-      status === leaveTab.value
-
-    const searchable = [
-      leave.name,
-      leave.leave_type,
-      leave.description,
-      leave.from_date,
-      leave.to_date,
-      label(leave)
-    ].filter(Boolean).join(' ').toLowerCase()
-
-    return matchesStatus &&
-      (!query || searchable.includes(query))
-  })
-})
-
-const actionDateInput = ref('')
-const actionDateSearch = ref('')
-
-const actionableLeaves = computed(() =>
-  leaves.value.filter(leave => {
-    const status = label(leave)
-
-    if (status === 'Pending' || status === 'Open') {
-      return true
-    }
-
-    if (status === 'Approved' && isFutureLeave(leave)) {
-      return true
-    }
-
-    return false
-  })
-)
-
-const filteredActionableLeaves = computed(() => {
-  const searchDate = actionDateSearch.value
-
-  if (!searchDate) {
-    return actionableLeaves.value
-  }
-
-  return actionableLeaves.value.filter(leave => {
-    const from = String(leave.from_date || '').slice(0, 10)
-    const to = String(leave.to_date || '').slice(0, 10)
-
-    return searchDate >= from && searchDate <= to
-  })
-})
-
-function searchActionDate() {
-  actionDateSearch.value = actionDateInput.value
-}
-
-function clearActionDateSearch() {
-  actionDateInput.value = ''
-  actionDateSearch.value = ''
-}
-
-const leaveCounts = computed(() => ({
-  total: leaves.value.length,
-
-  approved: leaves.value.filter(
-    (leave) => label(leave) === 'Approved'
-  ).length,
-
-  pending: leaves.value.filter(
-    (leave) => ['Pending', 'Open'].includes(label(leave))
-  ).length,
-
-  rejected: leaves.value.filter(
-    (leave) => label(leave) === 'Rejected'
-  ).length
-}))
-
-const error = ref('')
-const success = ref('')
-const loading = ref(false)
-
-const today = new Date().toLocaleDateString('en-CA')
 
 const days = computed(() => {
   if (leaveChoice.value === 'Half Day') {
     return form.value.from_date ? 0.5 : 0
   }
 
-  const { from_date, to_date } = form.value
-  if (!from_date || !to_date) return 0
+  if (!form.value.from_date || !form.value.to_date) {
+    return 0
+  }
 
   const diff =
-    (new Date(to_date) - new Date(from_date)) / 86400000
+    (new Date(form.value.to_date) -
+      new Date(form.value.from_date)) / 86400000
 
   return diff >= 0 ? diff + 1 : 0
 })
@@ -192,6 +138,186 @@ const remaining = computed(() =>
 const overBalance = computed(() =>
   days.value > remaining.value
 )
+
+const filteredLeaves = computed(() => {
+  const query = leaveSearch.value.trim().toLowerCase()
+
+  return leaves.value.filter(leave => {
+    const status = label(leave)
+
+    const matchesStatus =
+      leaveTab.value === 'All' ||
+      (leaveTab.value === 'Pending' &&
+        ['Pending', 'Open'].includes(status)) ||
+      status === leaveTab.value
+
+    const searchable = [
+      leave.name,
+      leave.leave_type,
+      leave.description,
+      leave.from_date,
+      leave.to_date,
+      status
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return matchesStatus &&
+      (!query || searchable.includes(query))
+  })
+})
+
+const leaveCounts = computed(() => {
+  const pendingLeaves = leaves.value.filter(
+    leave => ['Pending', 'Open'].includes(label(leave))
+  )
+
+  return {
+    total: leaves.value.length,
+    approved: leaves.value.filter(
+      leave => label(leave) === 'Approved'
+    ).length,
+    pending: pendingLeaves.reduce(
+      (sum, leave) => sum + Number(leave.total_leave_days || 0),
+      0
+    ),
+    pendingRequests: pendingLeaves.length,
+    rejected: leaves.value.filter(
+      leave => label(leave) === 'Rejected'
+    ).length
+  }
+})
+
+const pendingDaysByType = computed(() => {
+  const result = {}
+
+  leaves.value
+    .filter(leave => ['Pending', 'Open'].includes(label(leave)))
+    .forEach(leave => {
+      const type = leave.leave_type || 'Leave'
+      result[type] = (result[type] || 0) + Number(leave.total_leave_days || 0)
+    })
+
+  return result
+})
+
+const actionableLeaves = computed(() =>
+  leaves.value.filter(leave => {
+    const status = label(leave)
+
+    return (
+      status === 'Pending' ||
+      status === 'Open' ||
+      (status === 'Approved' && isFutureLeave(leave))
+    )
+  })
+)
+
+const filteredActionableLeaves = computed(() => {
+  if (!actionDateSearch.value) {
+    return actionableLeaves.value
+  }
+
+  return actionableLeaves.value.filter(leave => {
+    const from = String(leave.from_date || '').slice(0, 10)
+    const to = String(leave.to_date || '').slice(0, 10)
+
+    return actionDateSearch.value >= from &&
+      actionDateSearch.value <= to
+  })
+})
+
+const pendingCancellations = computed(() =>
+  cancellationRequests.value
+    .filter(request => request.status === 'Pending')
+    .map(request => request.leave_application)
+)
+
+function leaveIcon(type) {
+  const icons = {
+    'Casual Leave': '☀',
+    'Sick Leave': '✚',
+    'Maternity Leave': '♡',
+    'Paternity Leave': '♙',
+    'Compensatory Off': '↗',
+    'Birthday & Anniversary Leave': '★',
+    'Carry Forward': '↻',
+    'FTE Adjustment': '⚙'
+  }
+
+  return icons[type] || 'L'
+}
+
+function leaveIconColor(type) {
+  const colors = {
+    'Casual Leave': '#35a36a',
+    'Sick Leave': '#e85d5d',
+    'Earned Leave': '#7b61c9',
+    'Comp Off': '#e78b32',
+    'Compensatory Off': '#e78b32',
+    'Maternity Leave': '#e85d9e',
+    'Paternity Leave': '#4f7df3',
+    'Optional Leave': '#f59e0b',
+    'Privilege Leave': '#2874e8',
+    'Probation': '#6366f1',
+    'Birthday & Anniversary Leave': '#e85d9e',
+    'Carry Forward': '#35a36a',
+    'FTE Adjustment': '#1e9a9a',
+    'Intern Leave': '#0ea5a4',
+    'Intern Adjustment': '#8b5cf6',
+    'Personal Time Off': '#64748b'
+  }
+
+  return colors[type] || '#2874e8'
+}
+
+function leaveIconBackground(type) {
+  const backgrounds = {
+    'Casual Leave': '#edf9f2',
+    'Sick Leave': '#fff0f0',
+    'Earned Leave': '#f2efff',
+    'Comp Off': '#fff5e8',
+    'Compensatory Off': '#fff5e8',
+    'Maternity Leave': '#fff0f6',
+    'Paternity Leave': '#eef3ff',
+    'Optional Leave': '#fff7e8',
+    'Privilege Leave': '#edf4ff',
+    'Probation': '#f1f0ff',
+    'Birthday & Anniversary Leave': '#fff0f6',
+    'Carry Forward': '#edf9f2',
+    'FTE Adjustment': '#eafafa',
+    'Intern Leave': '#eafafa',
+    'Intern Adjustment': '#f3efff',
+    'Personal Time Off': '#f1f4f8'
+  }
+
+  return backgrounds[type] || '#edf4ff'
+}
+
+function leaveCode(type) {
+  const codes = {
+    'Casual Leave': 'CL',
+    'Sick Leave': 'SL',
+    'Earned Leave': 'EL',
+    'Comp Off': 'CO',
+    'Compensatory Off': 'COMP',
+    'Maternity Leave': 'ML',
+    'Paternity Leave': 'PL',
+    'Optional Leave': 'OL',
+    'Privilege Leave': 'PLV',
+    'Probation': 'PRO',
+    'Birthday & Anniversary Leave': 'BA',
+    'Carry Forward': 'CF',
+    'FTE Adjustment': 'FTE',
+    'Intern Leave': 'IL',
+    'Intern Adjustment': 'IA',
+    'Personal Time Off': 'PTO'
+  }
+
+  return codes[type] || ''
+}
+
 function balancePercentage(balance) {
   if (!balance.total_leaves) return 0
 
@@ -220,19 +346,21 @@ async function loadBalances() {
     {
       params: {
         employee: employee.value.name,
-        date: today,
-      },
+        date: today
+      }
     }
   )
 
-  balances.value = res.data.message.leave_allocation || {}
+  balances.value =
+    res.data.message.leave_allocation || {}
 
   if (!leaveChoice.value) {
     const types = Object.keys(balances.value)
 
-    leaveChoice.value = types.includes('Casual Leave')
-      ? 'Casual Leave'
-      : (types[0] || '')
+    leaveChoice.value =
+      types.includes('Casual Leave')
+        ? 'Casual Leave'
+        : (types[0] || '')
   }
 
   form.value.leave_type =
@@ -241,33 +369,87 @@ async function loadBalances() {
       : leaveChoice.value
 }
 
+async function loadLeaves() {
+  try {
+    const res = await api.get(
+      '/api/resource/Leave Application',
+      {
+        params: {
+          filters: JSON.stringify([
+            ['employee', '=', employee.value.name],
+            ['docstatus', '!=', 2]
+          ]),
+          fields: JSON.stringify([
+            'name',
+            'leave_type',
+            'from_date',
+            'to_date',
+            'total_leave_days',
+            'status',
+            'workflow_state',
+            'description',
+            'creation'
+          ]),
+          order_by: 'creation desc',
+          limit_page_length: 100
+        }
+      }
+    )
+
+    leaves.value = res.data.data || []
+  } catch (e) {
+    leavesError.value = errMsg(
+      e,
+      'Could not load leave applications'
+    )
+  }
+}
+
+async function loadCancellationRequests() {
+  try {
+    const res = await api.get(
+      '/api/method/hr_portal_custom.api.leave_cancellation_request.my_cancellation_requests'
+    )
+
+    cancellationRequests.value =
+      res.data.message || []
+  } catch {
+    cancellationRequests.value = []
+  }
+}
+
 onMounted(async () => {
   try {
     const email = localStorage.getItem('user')
 
-    const emp = await api.get('/api/resource/Employee', {
-      params: {
-        filters: JSON.stringify([
-          ['user_id', '=', email],
-        ]),
-        fields: JSON.stringify([
-          'name',
-          'company',
-          'leave_approver',
-        ]),
-      },
-    })
+    const res = await api.get(
+      '/api/resource/Employee',
+      {
+        params: {
+          filters: JSON.stringify([
+            ['user_id', '=', email]
+          ]),
+          fields: JSON.stringify([
+            'name',
+            'company',
+            'leave_approver'
+          ])
+        }
+      }
+    )
 
-    employee.value = emp.data.data[0]
+    employee.value = res.data.data?.[0]
 
     if (!employee.value) {
       error.value = 'No employee record linked'
       return
     }
 
-    await loadBalances()
-    await loadLeaves()
-    await loadCancellationRequests()
+    await Promise.all([
+      loadBalances(),
+      loadLeaves(),
+      loadCancellationRequests()
+    ])
   } catch (e) {
     if (
       e.response?.status === 401 ||
@@ -275,11 +457,20 @@ onMounted(async () => {
     ) {
       localStorage.removeItem('user')
       router.push('/login')
-    } else {
-      error.value = errMsg(e, 'Could not load form data')
+      return
     }
+
+    error.value = errMsg(
+      e,
+      'Could not load leave data'
+    )
   }
 })
+
+function onAttachmentChange(event) {
+  const file = event.target.files?.[0] || null
+  attachment.value = file
+}
 
 async function submit() {
   error.value = ''
@@ -291,28 +482,53 @@ async function submit() {
       throw new Error('Please select a leave type')
     }
 
-    const isHalfDay = leaveChoice.value === 'Half Day'
-    const leaveType = isHalfDay
-      ? 'Casual Leave'
-      : leaveChoice.value
+    const isHalfDay =
+      leaveChoice.value === 'Half Day'
+
+    const leaveType =
+      isHalfDay
+        ? 'Casual Leave'
+        : leaveChoice.value
 
     if (!balances.value[leaveType]) {
-      throw new Error(`${leaveType} is not allocated to this employee`)
+      throw new Error(
+        `${leaveType} is not allocated to this employee`
+      )
     }
 
     if (
       days.value >
-      (balances.value[leaveType]?.remaining_leaves ?? 0)
+      (balances.value[leaveType]
+        ?.remaining_leaves ?? 0)
     ) {
       throw new Error(
         'The requested leave exceeds your available balance'
       )
     }
 
-    const awaitPayload = {
+    if (
+      isHalfDay &&
+      !halfDaySession.value
+    ) {
+      throw new Error(
+        'Please select the half-day session'
+      )
+    }
+
+    if (
+      !isHalfDay &&
+      !form.value.to_date
+    ) {
+      throw new Error(
+        'Please select an end date'
+      )
+    }
+
+    const payload = {
       employee: employee.value.name,
       company: employee.value.company,
-      leave_approver: employee.value.leave_approver,
+      leave_approver:
+        employee.value.leave_approver,
       leave_type: leaveType,
       from_date: form.value.from_date,
       to_date: isHalfDay
@@ -322,23 +538,64 @@ async function submit() {
       half_day_date: isHalfDay
         ? form.value.from_date
         : null,
-      custom_half_day_session: isHalfDay
-        ? halfDaySession.value
-        : null,
-      description: form.value.description,
+      custom_half_day_session:
+        isHalfDay
+          ? halfDaySession.value
+          : null,
+      description: form.value.description
     }
 
-    await api.post('/api/resource/Leave Application', awaitPayload)
+    const leaveResponse = await api.post(
+      '/api/resource/Leave Application',
+      payload
+    )
 
-    success.value =
-      'Leave application submitted. Status: Pending'
+    const leaveName =
+      leaveResponse.data?.data?.name
+
+    if (attachment.value && leaveName) {
+      const formData = new FormData()
+
+      formData.append('file', attachment.value)
+      formData.append('doctype', 'Leave Application')
+      formData.append('docname', leaveName)
+      formData.append('is_private', '0')
+
+      try {
+        await api.post(
+          '/api/method/upload_file',
+          formData
+        )
+      } catch (uploadError) {
+        console.error(
+          'Attachment upload failed:',
+          uploadError
+        )
+
+        success.value =
+          'Leave submitted, but the attachment could not be uploaded.'
+      }
+    }
+
+    if (!success.value) {
+      success.value =
+        'Leave application submitted successfully.'
+    }
 
     form.value.from_date = ''
     form.value.to_date = ''
     form.value.description = ''
     halfDaySession.value = ''
+    attachment.value = null
 
-    await loadBalances()
+    if (attachmentInput.value) {
+      attachmentInput.value.value = ''
+    }
+
+    await Promise.all([
+      loadBalances(),
+      loadLeaves()
+    ])
   } catch (e) {
     error.value = errMsg(
       e,
@@ -348,16 +605,10 @@ async function submit() {
     loading.value = false
   }
 }
-const actionDialog = ref({
-  open: false,
-  type: '',
-  leave: null,
-  reason: ''
-})
-const actionBusy = ref(false)
 
 function openWithdraw(leave) {
   leavesError.value = ''
+
   actionDialog.value = {
     open: true,
     type: 'withdraw',
@@ -368,6 +619,7 @@ function openWithdraw(leave) {
 
 function openCancellation(leave) {
   leavesError.value = ''
+
   actionDialog.value = {
     open: true,
     type: 'cancel',
@@ -382,12 +634,26 @@ function closeActionDialog() {
 }
 
 async function confirmAction() {
-  if (actionBusy.value || !actionDialog.value.leave) return
+  if (
+    actionBusy.value ||
+    !actionDialog.value.leave
+  ) {
+    return
+  }
 
-  const { type, leave, reason } = actionDialog.value
+  const {
+    type,
+    leave,
+    reason
+  } = actionDialog.value
 
-  if (type === 'cancel' &&
-      (reason.trim().length < 10 || reason.trim().length > 1000)) {
+  if (
+    type === 'cancel' &&
+    (
+      reason.trim().length < 10 ||
+      reason.trim().length > 1000
+    )
+  ) {
     leavesError.value =
       'Please enter a reason between 10 and 1000 characters.'
     return
@@ -401,11 +667,13 @@ async function confirmAction() {
     if (type === 'withdraw') {
       await api.post(
         '/api/method/hr_portal_custom.api.leave_cancellation.withdraw_leave',
-        { leave_application: leave.name }
+        {
+          leave_application: leave.name
+        }
       )
 
-      await Promise.all([loadLeaves(), loadBalances()])
-      success.value = 'Leave application withdrawn successfully.'
+      success.value =
+        'Leave application withdrawn successfully.'
     } else {
       await api.post(
         '/api/method/hr_portal_custom.api.leave_cancellation_request.request_cancellation',
@@ -415,9 +683,15 @@ async function confirmAction() {
         }
       )
 
-      await loadCancellationRequests()
-      success.value = 'Cancellation request submitted to HR.'
+      success.value =
+        'Cancellation request submitted to HR.'
     }
+
+    await Promise.all([
+      loadLeaves(),
+      loadBalances(),
+      loadCancellationRequests()
+    ])
 
     actionDialog.value.open = false
   } catch (e) {
@@ -432,105 +706,157 @@ async function confirmAction() {
   }
 }
 
-const cancellationRequests = ref([])
-
-const pendingCancellations = computed(() =>
-  cancellationRequests.value
-    .filter((request) => request.status === 'Pending')
-    .map((request) => request.leave_application)
-)
-
-async function loadCancellationRequests() {
-  const res = await api.get(
-    '/api/method/hr_portal_custom.api.leave_cancellation_request.my_cancellation_requests'
-  )
-  cancellationRequests.value = res.data.message || []
+function searchActionDate() {
+  actionDateSearch.value =
+    actionDateInput.value
 }
 
-async function loadLeaves() {
-  try {
-    const res = await api.get('/api/resource/Leave Application', {
-      params: {
-        filters: JSON.stringify([
-          ['employee', '=', employee.value.name],
-          ['docstatus', '!=', 2]
-        ]),
+function clearActionDateSearch() {
+  actionDateInput.value = ''
+  actionDateSearch.value = ''
+}
 
-        fields: JSON.stringify([
-          'name',
-          'leave_type',
-          'from_date',
-          'to_date',
-          'total_leave_days',
-          'status',
-          'workflow_state',
-          'description',
-          'creation'
-        ]),
+/* Calendar */
 
-        order_by: 'creation desc',
-        limit_page_length: 100
-      }
+const calendarCursor = ref(new Date())
+
+const calendarTitle = computed(() =>
+  calendarCursor.value.toLocaleDateString(
+    'en-US',
+    {
+      month: 'long',
+      year: 'numeric'
+    }
+  )
+)
+
+const calendarDays = computed(() => {
+  const year =
+    calendarCursor.value.getFullYear()
+
+  const month =
+    calendarCursor.value.getMonth()
+
+  const first =
+    new Date(year, month, 1)
+
+  const daysInMonth =
+    new Date(year, month + 1, 0)
+      .getDate()
+
+  const mondayOffset =
+    (first.getDay() + 6) % 7
+
+  const result = []
+
+  for (let i = 0; i < mondayOffset; i++) {
+    result.push({
+      day: '',
+      date: '',
+      outside: true
     })
-
-    leaves.value = res.data.data
-  } catch (e) {
-    leavesError.value = errMsg(
-      e,
-      'Could not load leave applications'
-    )
   }
+
+  for (
+    let day = 1;
+    day <= daysInMonth;
+    day++
+  ) {
+    result.push({
+      day,
+      date: [
+        year,
+        String(month + 1).padStart(2, '0'),
+        String(day).padStart(2, '0')
+      ].join('-'),
+      outside: false
+    })
+  }
+
+  while (result.length < 42) {
+    result.push({
+      day: '',
+      date: '',
+      outside: true
+    })
+  }
+
+  return result
+})
+
+function previousMonth() {
+  calendarCursor.value = new Date(
+    calendarCursor.value.getFullYear(),
+    calendarCursor.value.getMonth() - 1,
+    1
+  )
+}
+
+function nextMonth() {
+  calendarCursor.value = new Date(
+    calendarCursor.value.getFullYear(),
+    calendarCursor.value.getMonth() + 1,
+    1
+  )
+}
+
+function calendarSelected(date) {
+  if (!date || !form.value.from_date) {
+    return false
+  }
+
+  const from = form.value.from_date
+  const to =
+    leaveChoice.value === 'Half Day'
+      ? from
+      : (form.value.to_date || from)
+
+  return date >= from && date <= to
+}
+
+function isToday(date) {
+  return date === today
 }
 </script>
 
 <template>
   <div class="leaves-page">
 
-    <!-- PAGE HEADER -->
-    <header class="enterprise-page-header">
-      <div
-        :class="[
-          'page-heading',
-          { 'page-heading-action': activeTab === 'actions' }
-        ]"
-      >
-        <button
-          v-if="activeTab === 'actions'"
-          type="button"
-          class="leave-action-back"
-          aria-label="Back to Leaves"
-          title="Back to Leaves"
-          @click="router.push('/leaves')"
-        >
-          ←
-        </button>
+    <header class="leave-header">
+      <div>
+        <span class="eyebrow">
+          EMPLOYEE SELF SERVICE
+        </span>
 
-        <div class="page-heading-copy">
-          <span class="page-eyebrow">EMPLOYEE SELF SERVICE</span>
+        <h1>
+          {{
+            activeTab === 'apply'
+              ? 'Apply Leave'
+              : activeTab === 'my-leaves'
+                ? 'My Leaves'
+                : activeTab === 'balance'
+                  ? 'Leave Balance'
+                  : 'Withdraw / Cancel Leave'
+          }}
+        </h1>
 
-          <h1>
-            {{
-              activeTab === 'actions'
-                ? 'Withdraw / Cancel Leave'
-                : 'Leave management'
-            }}
-          </h1>
-
-          <p v-if="activeTab === 'actions'">
-            Manage leave requests that can still be withdrawn or cancelled.
-          </p>
-
-          <p v-else>
-            View your leave history, manage requests and
-            track available leave.
-          </p>
-        </div>
+        <p>
+          {{
+            activeTab === 'apply'
+              ? 'Submit a leave request for your planned time off.'
+              : activeTab === 'my-leaves'
+                ? 'Review your leave applications and track their status.'
+                : activeTab === 'balance'
+                  ? 'View your available leave balances and usage.'
+                  : 'Manage leave requests that can still be changed.'
+          }}
+        </p>
       </div>
 
       <button
         v-if="activeTab === 'apply'"
+        class="header-action"
         type="button"
-        class="secondary-page-action"
         @click="router.push({
           path: '/leaves',
           query: { tab: 'actions' }
@@ -539,21 +865,12 @@ async function loadLeaves() {
         Withdraw / Cancel Leave
       </button>
 
-      <button
-        v-else-if="activeTab !== 'actions'"
-        type="button"
-        class="primary-page-action"
-        @click="activeTab = 'apply'"
-      >
-        <span aria-hidden="true">+</span>
-        Apply for leave
-      </button>
     </header>
 
-    <!-- TOP TABS -->
+    <!-- TABS -->
     <nav
       v-if="activeTab !== 'actions'"
-      class="leave-tabs"
+      class="tabs"
     >
       <button
         :class="{ active: activeTab === 'apply' }"
@@ -577,385 +894,488 @@ async function loadLeaves() {
       </button>
     </nav>
 
-    <!-- APPLY LEAVE -->
-    <section v-if="activeTab === 'apply'" class="leave-content">
-      <div class="layout">
+    <!-- APPLY -->
+    <main
+      v-if="activeTab === 'apply'"
+      class="apply-layout"
+    >
 
-        <form
-          class="panel form-panel apply-form-card"
-          @submit.prevent="submit"
-        >
-          <!-- FORM HERO -->
-          <div class="apply-form-header">
-            <div class="apply-form-heading">
-              <div class="apply-form-icon">
-                <span>✦</span>
-              </div>
+      <!-- LEFT -->
+      <form
+        class="request-card"
+        @submit.prevent="submit"
+      >
 
-              <div>
-                <span class="leave-form-eyebrow">
-                  LEAVE REQUEST
-                </span>
+        <div class="request-card-heading">
+          <div class="sparkle">✦</div>
 
-                <h2>Plan your time off</h2>
-
-                <p>
-                  Complete the details below and send your leave
-                  request to your approver.
-                </p>
-              </div>
-            </div>
-
-            <span class="draft-chip">
-              Draft request
-            </span>
-          </div>
-
-          <div class="apply-form-body">
-
-            <!-- SECTION 01 -->
-            <section class="apply-form-section">
-              <div class="apply-section-heading">
-                <span class="apply-section-number">01</span>
-
-                <div>
-                  <strong>Request details</strong>
-                  <p>
-                    Select the leave type and the dates you need.
-                  </p>
-                </div>
-              </div>
-
-              <div class="apply-fields">
-
-                <!-- Leave type -->
-                <div class="field field-full">
-                  <label for="leave-type">
-                    Leave type
-                  </label>
-
-                  <div class="select-shell">
-                    <select
-                      id="leave-type"
-                      v-model="leaveChoice"
-                      required
-                    >
-                      <option disabled value="">
-                        Select a leave type
-                      </option>
-
-                      <option
-                        v-if="balances['Casual Leave']"
-                        value="Half Day"
-                      >
-                        Half Day (Casual Leave)
-                      </option>
-
-                      <option
-                        v-for="(value, type) in balances"
-                        :key="type"
-                        :value="type"
-                        :disabled="
-                          Number(value.remaining_leaves || 0) <= 0
-                        "
-                      >
-                        {{ type }}
-                      </option>
-                    </select>
-                  </div>
-                </div>
-
-                <!-- Dates -->
-                <div class="field">
-                  <label for="from-date">
-                    {{ leaveChoice === 'Half Day' ? 'Date' : 'From date' }}
-                  </label>
-
-                  <div class="date-input-shell">
-                    <input
-                      id="from-date"
-                      v-model="form.from_date"
-                      type="date"
-                      :min="today"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div
-                  v-if="
-                    leaveChoice &&
-                    leaveChoice !== 'Half Day'
-                  "
-                  class="field"
-                >
-                  <label for="to-date">
-                    To date
-                  </label>
-
-                  <div class="date-input-shell">
-                    <input
-                      id="to-date"
-                      v-model="form.to_date"
-                      type="date"
-                      :min="form.from_date || today"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <!-- Half day -->
-                <div
-                  v-if="leaveChoice === 'Half Day'"
-                  class="field field-full"
-                >
-                  <label for="half-day-session">
-                    Half-day session
-                  </label>
-
-                  <div class="session-options">
-                    <label class="session-option">
-                      <input
-                        v-model="halfDaySession"
-                        type="radio"
-                        value="First Half"
-                      />
-
-                      <span>
-                        <strong>First half</strong>
-                        <small>Morning</small>
-                      </span>
-                    </label>
-
-                    <label class="session-option">
-                      <input
-                        v-model="halfDaySession"
-                        type="radio"
-                        value="Second Half"
-                      />
-
-                      <span>
-                        <strong>Second half</strong>
-                        <small>Afternoon</small>
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-              </div>
-            </section>
-
-            <!-- SECTION 02 -->
-            <section class="apply-form-section reason-section">
-              <div class="apply-section-heading">
-                <span class="apply-section-number">02</span>
-
-                <div>
-                  <strong>Reason for leave</strong>
-                  <p>
-                    Give your approver enough context to review
-                    the request.
-                  </p>
-                </div>
-              </div>
-
-              <div class="field field-full">
-                <label for="leave-reason">
-                  Reason
-                </label>
-
-                <textarea
-                  id="leave-reason"
-                  v-model="form.description"
-                  rows="5"
-                  placeholder="Briefly explain why you need this leave..."
-                ></textarea>
-
-                <div class="field-hint">
-                  A clear and concise reason is recommended.
-                </div>
-              </div>
-            </section>
-
-
-            <!-- VALIDATION -->
-            <p
-              v-if="days && overBalance"
-              class="warn"
-            >
-              Your request exceeds your available balance.
-            </p>
-
-            <p
-              v-if="error"
-              class="err"
-            >
-              {{ error }}
-            </p>
-
-            <p
-              v-if="success"
-              class="ok"
-            >
-              {{ success }}
-            </p>
-
-          </div>
-
-          <!-- FOOTER -->
-          <div class="apply-form-footer">
-            <div class="footer-message">
-              <span class="footer-check">✓</span>
-
-              <div>
-                <strong>Ready when you are</strong>
-                <p>
-                  Your request will be sent to your configured
-                  leave approver.
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              :disabled="
-                loading ||
-                !days ||
-                overBalance ||
-                !leaveChoice ||
-                !selectedBalance ||
-                (leaveChoice === 'Half Day' && !halfDaySession) ||
-                (leaveChoice !== 'Half Day' && !form.to_date)
-              "
-            >
-              <span>
-                {{ loading ? 'Submitting...' : 'Submit leave request' }}
-              </span>
-
-              <span class="submit-arrow">→</span>
-            </button>
-          </div>
-        </form>
-
-        <!-- EMPLOYEE REQUEST SUMMARY -->
-        <aside class="apply-summary-panel">
-
-          <div class="apply-summary-top">
-            <div>
-              <span class="apply-summary-eyebrow">
-                REQUEST SUMMARY
-              </span>
-              <h3>Your leave request</h3>
-              <p>
-                Review the details before sending your request.
-              </p>
-            </div>
-
-            <span
-              :class="[
-                'apply-summary-status',
-                {
-                  ready:
-                    days &&
-                    leaveChoice &&
-                    selectedBalance &&
-                    !overBalance &&
-                    (
-                      leaveChoice === 'Half Day'
-                        ? !!halfDaySession
-                        : !!form.to_date
-                    )
-                }
-              ]"
-            >
-              {{
-                overBalance
-                  ? 'Balance exceeded'
-                  : days &&
-                    leaveChoice &&
-                    selectedBalance &&
-                    (
-                      leaveChoice === 'Half Day'
-                        ? !!halfDaySession
-                        : !!form.to_date
-                    )
-                  ? 'Ready'
-                  : 'Incomplete'
-              }}
-            </span>
-          </div>
-
-          <div class="apply-summary-list">
-
-            <div class="apply-summary-row">
-              <span>Leave type</span>
-              <strong>
-                {{ leaveChoice || 'Not selected' }}
-              </strong>
-            </div>
-
-            <div class="apply-summary-row">
-              <span>From</span>
-              <strong>
-                {{ form.from_date || 'Not selected' }}
-              </strong>
-            </div>
-
-            <div class="apply-summary-row">
-              <span>To</span>
-              <strong>
-                {{
-                  leaveChoice === 'Half Day'
-                    ? (form.from_date || 'Not selected')
-                    : (form.to_date || 'Not selected')
-                }}
-              </strong>
-            </div>
-
-            <div class="apply-summary-row">
-              <span>Duration</span>
-              <strong>
-                {{
-                  days
-                    ? `${days} ${days === 1 ? 'day' : 'days'}`
-                    : 'Not selected'
-                }}
-              </strong>
-            </div>
-
-          </div>
-
-          <div class="apply-summary-divider"></div>
-
-          <div class="apply-approver-card">
-            <span class="apply-summary-eyebrow">
-              APPROVAL
+          <div>
+            <span class="card-eyebrow">
+              LEAVE REQUEST
             </span>
 
-            <div class="apply-approver-icon">✓</div>
-
-            <div>
-              <strong>Leave approver</strong>
-              <p>
-                Your request will be routed to your configured
-                leave approver.
-              </p>
-            </div>
-          </div>
-
-          <div class="apply-summary-note">
-            <span>i</span>
+            <h2>Plan your time off</h2>
 
             <p>
-              You can review and change these details before
-              submitting the request.
+              Complete the details below and send your
+              leave request to your approver.
             </p>
           </div>
+        </div>
+
+        <!-- STEP 1 -->
+        <section class="form-section">
+
+          <div class="section-heading">
+            <span>1</span>
+
+            <div>
+              <h3>Leave Details</h3>
+              <p>
+                Provide the basic information about your leave request.
+              </p>
+            </div>
+          </div>
+
+          <div class="field-grid">
+
+            <label class="field">
+              <span>
+                Leave Type <b>*</b>
+              </span>
+
+              <select
+                v-model="leaveChoice"
+                required
+              >
+                <option disabled value="">
+                  Select leave type
+                </option>
+
+                <option
+                  v-if="balances['Casual Leave']"
+                  value="Half Day"
+                >
+                  Half Day (Casual Leave)
+                </option>
+
+                <option
+                  v-for="(balance, type) in balances"
+                  :key="type"
+                  :value="type"
+                  :disabled="
+                    Number(balance.remaining_leaves || 0) <= 0
+                  "
+                >
+                  {{ type }}
+                </option>
+              </select>
+
+              <small>
+                Select the type of leave you want to apply for.
+              </small>
+            </label>
+
+            <label class="field">
+              <span>
+                Reason <b>*</b>
+              </span>
+
+              <input
+                v-model="form.description"
+                type="text"
+                maxlength="500"
+                placeholder="Personal work"
+                required
+              />
+
+              <small>
+                Brief reason for your leave request.
+              </small>
+            </label>
+
+          </div>
+        </section>
+
+        <!-- STEP 2 -->
+        <section class="form-section">
+
+          <div class="section-heading">
+            <span>2</span>
+
+            <div>
+              <h3>Duration</h3>
+              <p>
+                Select the start and end date for your leave.
+              </p>
+            </div>
+          </div>
+
+          <div class="field-grid">
+
+            <label class="field">
+              <span>
+                {{
+                  leaveChoice === 'Half Day'
+                    ? 'Date'
+                    : 'Start Date'
+                }}
+                <b>*</b>
+              </span>
+
+              <input
+                v-model="form.from_date"
+                type="date"
+                :min="today"
+                required
+              />
+
+              <small>
+                Select the first day of your leave.
+              </small>
+            </label>
+
+            <label
+              v-if="leaveChoice !== 'Half Day'"
+              class="field"
+            >
+              <span>
+                End Date <b>*</b>
+              </span>
+
+              <input
+                v-model="form.to_date"
+                type="date"
+                :min="form.from_date || today"
+                required
+              />
+
+              <small>
+                Select the last day of your leave.
+              </small>
+            </label>
+
+          </div>
+
+          <div class="duration-row">
+
+            <div class="days-box">
+              <span>Total Days</span>
+              <strong>
+                {{ days || 0 }}
+                {{ days === 1 ? 'day' : 'days' }}
+              </strong>
+
+              <small>
+                Includes weekends/holidays if applicable.
+              </small>
+            </div>
+
+            <div
+              v-if="leaveChoice === 'Half Day'"
+              class="session-box"
+            >
+
+              <span>Leave Session</span>
+
+              <label
+                class="session-option"
+                :class="{
+                  selected: halfDaySession === 'First Half'
+                }"
+              >
+                <input
+                  v-model="halfDaySession"
+                  type="radio"
+                  value="First Half"
+                />
+                <span>First Half (Morning)</span>
+              </label>
+
+              <label
+                class="session-option"
+                :class="{
+                  selected: halfDaySession === 'Second Half'
+                }"
+              >
+                <input
+                  v-model="halfDaySession"
+                  type="radio"
+                  value="Second Half"
+                />
+                <span>Second Half (Afternoon)</span>
+              </label>
+
+            </div>
+
+          </div>
+        </section>
+
+        <!-- STEP 3 -->
+        <section class="form-section last">
+
+          <div class="section-heading">
+            <span>3</span>
+
+            <div>
+              <h3>
+                Additional Information
+                <em>(Optional)</em>
+              </h3>
+
+              <p>
+                Add any supporting details or documents.
+              </p>
+            </div>
+          </div>
+
+          <label
+            class="support-box"
+            for="leave-attachment"
+          >
+            <div class="support-icon">↑</div>
+
+            <div class="support-copy">
+              <strong>
+                {{ attachment
+                  ? attachment.name
+                  : 'Add supporting document' }}
+              </strong>
+
+              <p>
+                {{ attachment
+                  ? 'Click to replace the selected file.'
+                  : 'Attach a document if required.' }}
+              </p>
+            </div>
+
+            <span class="support-action">
+              {{ attachment ? 'Change' : 'Attach' }}
+            </span>
+
+            <input
+              id="leave-attachment"
+              ref="attachmentInput"
+              class="support-file-input"
+              type="file"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+              @change="onAttachmentChange"
+            />
+          </label>
+
+        </section>
+
+        <div
+          v-if="overBalance"
+          class="message warning"
+        >
+          Your request exceeds your available leave balance.
+        </div>
+
+        <div
+          v-if="error"
+          class="leave-validation-error"
+        >
+          {{ error }}
+        </div>
+
+        <div
+          v-if="success"
+          class="leave-submit-success"
+        >
+          {{ success }}
+        </div>
+
+        <footer class="form-footer">
+          <button
+            type="button"
+            class="cancel-button"
+            @click="router.push('/leaves')"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            class="submit-button"
+            :disabled="
+              loading ||
+              !days ||
+              overBalance ||
+              !leaveChoice ||
+              !selectedBalance ||
+              (
+                leaveChoice === 'Half Day' &&
+                !halfDaySession
+              ) ||
+              (
+                leaveChoice !== 'Half Day' &&
+                !form.to_date
+              )
+            "
+          >
+            {{ loading ? 'Submitting...' : 'Submit Request' }}
+            <span>→</span>
+          </button>
+        </footer>
+
+      </form>
+
+      <!-- RIGHT -->
+        <aside class="reference-sidebar">
+
+          <!-- LEAVE BALANCE -->
+          <section class="reference-side-card">
+
+            <div class="reference-side-header">
+              <div>
+                <h3>Your Leave Balance</h3>
+              </div>
+
+              <button
+                type="button"
+                @click="activeTab = 'balance'"
+              >
+                View Details
+              </button>
+            </div>
+
+            <div class="reference-balance-list">
+
+              <div
+                v-for="(balance, type) in balances"
+                :key="type"
+                class="reference-balance-item"
+              >
+
+                <div class="reference-balance-top">
+
+                  <div class="reference-balance-name">
+
+                    <LeaveTypeIcon
+                      :type="type"
+                      :size="22"
+                    />
+
+                    <span>{{ type }}</span>
+
+                  </div>
+
+                  <strong>
+                    {{ balance.remaining_leaves || 0 }}
+                    /
+                    {{ balance.total_leaves || 0 }}
+                    days
+                  </strong>
+
+                </div>
+
+                <div
+                  class="reference-balance-track"
+                  :class="iconClass(type)"
+                >
+                  <span
+                    :style="{
+                      width: `${
+                        balance.total_leaves
+                          ? Math.round(
+                              (balance.remaining_leaves /
+                                balance.total_leaves) * 100
+                            )
+                          : 0
+                      }%`
+                    }"
+                  ></span>
+                </div>
+
+              </div>
+
+            </div>
+
+          </section>
+
+
+          <!-- CALENDAR -->
+          <section class="reference-side-card reference-calendar-card">
+
+            <div class="reference-side-title">
+              <span class="reference-calendar-icon">
+                ▣
+              </span>
+
+              <h3>Date Preview</h3>
+            </div>
+
+            <div class="reference-calendar-header">
+
+              <button
+                type="button"
+                @click="previousMonth"
+                aria-label="Previous month"
+              >
+                ‹
+              </button>
+
+              <strong>{{ calendarTitle }}</strong>
+
+              <button
+                type="button"
+                @click="nextMonth"
+                aria-label="Next month"
+              >
+                ›
+              </button>
+
+            </div>
+
+            <div class="reference-calendar-weekdays">
+              <span>Mon</span>
+              <span>Tue</span>
+              <span>Wed</span>
+              <span>Thu</span>
+              <span>Fri</span>
+              <span>Sat</span>
+              <span>Sun</span>
+            </div>
+
+            <div class="reference-calendar-grid">
+
+              <span
+                v-for="(item, index) in calendarDays"
+                :key="index"
+                :class="[
+                  'reference-calendar-day',
+                  {
+                    outside: item.outside,
+                    today: calendarSelected(item.date) && item.date === today,
+                    selected: calendarSelected(item.date)
+                  }
+                ]"
+              >
+                {{ item.day }}
+              </span>
+
+            </div>
+
+            <div class="reference-calendar-legend">
+              <span>
+                <i class="legend-leave"></i>
+                Leave Days
+              </span>
+
+              <span>
+                <i class="legend-weekend"></i>
+                Weekend
+              </span>
+            </div>
+
+          </section>
+
+
+
 
         </aside>
-
-      </div>
-    </section>
+    </main>
 
     <!-- MY LEAVES -->
     <section
@@ -963,41 +1383,61 @@ async function loadLeaves() {
       class="leave-content enterprise-leave-content"
     >
       <div class="enterprise-stats">
-        <div class="enterprise-stat">
+        <button
+          type="button"
+          class="enterprise-stat stat-card-clickable"
+          :class="{ active: leaveTab === 'All' }"
+          @click="leaveTab = 'All'"
+        >
           <div class="stat-top">
             <span>Total requests</span>
             <span class="stat-icon total-icon">▤</span>
           </div>
           <strong>{{ leaveCounts.total }}</strong>
           <small>All leave applications</small>
-        </div>
+        </button>
 
-        <div class="enterprise-stat">
+        <button
+          type="button"
+          class="enterprise-stat stat-card-clickable"
+          :class="{ active: leaveTab === 'Approved' }"
+          @click="leaveTab = 'Approved'"
+        >
           <div class="stat-top">
             <span>Approved</span>
             <span class="stat-icon approved-icon">✓</span>
           </div>
           <strong>{{ leaveCounts.approved }}</strong>
           <small>Approved applications</small>
-        </div>
+        </button>
 
-        <div class="enterprise-stat">
+        <button
+          type="button"
+          class="enterprise-stat stat-card-clickable"
+          :class="{ active: leaveTab === 'Pending' }"
+          @click="leaveTab = 'Pending'"
+        >
           <div class="stat-top">
             <span>Pending</span>
             <span class="stat-icon pending-icon">◷</span>
           </div>
           <strong>{{ leaveCounts.pending }}</strong>
           <small>Awaiting a decision</small>
-        </div>
+        </button>
 
-        <div class="enterprise-stat">
+        <button
+          type="button"
+          class="enterprise-stat stat-card-clickable"
+          :class="{ active: leaveTab === 'Rejected' }"
+          @click="leaveTab = 'Rejected'"
+        >
           <div class="stat-top">
             <span>Rejected</span>
             <span class="stat-icon rejected-icon">×</span>
           </div>
           <strong>{{ leaveCounts.rejected }}</strong>
           <small>Rejected applications</small>
-        </div>
+        </button>
       </div>
 
       <div
@@ -1016,26 +1456,18 @@ async function loadLeaves() {
         {{ success }}
       </div>
 
-      <div class="enterprise-register">
-        <div class="register-heading">
+      <!-- LEAVE HISTORY -->
+      <div class="leave-history-card">
+
+        <div class="leave-history-header">
           <div>
             <h2>Leave history</h2>
-            <p>
-              Review your applications and track their status.
-            </p>
-          </div>
-          <span class="record-count">
-            {{ filteredLeaves.length }} of
-            {{ leaves.length }} requests
-          </span>
-        </div>
-
-        <div class="register-toolbar">
-          <div class="status-filter">
-            <LeaveTabs v-model="leaveTab" />
+            <span>
+              {{ filteredLeaves.length }} of {{ leaves.length }} requests
+            </span>
           </div>
 
-          <label class="enterprise-search">
+          <label class="leave-history-search">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -1056,51 +1488,71 @@ async function loadLeaves() {
           </label>
         </div>
 
+        <div class="leave-history-divider"></div>
+
         <LeaveTable
           :leaves="filteredLeaves"
           :pending-cancellations="pendingCancellations"
           @withdraw="openWithdraw"
           @request-cancellation="openCancellation"
         />
+
       </div>
     </section>
 
-    <!-- WITHDRAW / CANCEL LEAVE -->
-    <section
-      v-else-if="activeTab === 'actions'"
-      class="leave-content leave-actions-page"
+    <!-- LEAVE BALANCE -->
+    <main
+      v-else-if="activeTab === 'balance'"
+      class="secondary-page"
     >
-      <div class="leave-actions-card">
-        <div class="leave-actions-heading">
+      <LeaveBalanceView
+        :balances="balances"
+        :pending-by-type="pendingDaysByType"
+        :pending-requests="leaveCounts.pendingRequests"
+      />
+    </main>
+
+    <!-- ACTION CENTER -->
+    <main
+      v-else-if="activeTab === 'actions'"
+      class="secondary-page"
+    >
+
+      <div class="action-card">
+
+        <div class="action-header">
           <div>
-            <span class="page-eyebrow">ACTION CENTER</span>
-            <h2>Leaves available for action</h2>
+            <span class="eyebrow">
+              ACTION CENTER
+            </span>
+
+            <h2>
+              Withdraw / Cancel Leave
+            </h2>
+
             <p>
-              Pending leaves can be withdrawn.
-              Approved future leaves can be sent to HR
-              for cancellation.
+              Manage leave requests that can still be changed.
             </p>
           </div>
 
-          <span class="leave-actions-count">
+          <strong>
             {{ filteredActionableLeaves.length }}
-            {{ filteredActionableLeaves.length === 1 ? 'leave' : 'leaves' }}
-          </span>
+          </strong>
         </div>
 
-        <div class="leave-action-search">
+        <div class="action-search">
+
           <label>
-            <span>Search by date</span>
+            Search by date
+
             <input
               v-model="actionDateInput"
               type="date"
-              aria-label="Search leave by date"
             />
           </label>
 
           <button
             type="button"
-            class="leave-action-search-btn"
             @click="searchActionDate"
           >
             Search
@@ -1108,126 +1560,82 @@ async function loadLeaves() {
 
           <button
             type="button"
-            class="leave-action-clear-btn"
+            class="clear-action"
             @click="clearActionDateSearch"
           >
-            Show All Leaves
+            Show All
           </button>
-        </div>
 
-        <div
-          v-if="!filteredActionableLeaves.length"
-          class="leave-actions-empty"
-        >
-          <strong>
-            {{
-              actionDateSearch
-                ? 'No actionable leaves found for this date'
-                : 'No leaves available for action'
-            }}
-          </strong>
-
-          <p>
-            {{
-              actionDateSearch
-                ? 'Try another date.'
-                : 'You have no pending or future approved leaves that can currently be changed.'
-            }}
-          </p>
         </div>
 
         <LeaveTable
-          v-else
+          v-if="filteredActionableLeaves.length"
           :leaves="filteredActionableLeaves"
           :pending-cancellations="pendingCancellations"
-          @withdraw="withdrawLeave"
-          @request-cancellation="requestCancellation"
+          @withdraw="openWithdraw"
+          @request-cancellation="openCancellation"
         />
-      </div>
-    </section>
 
-    <!-- LEAVE BALANCE -->
-    <section
-  v-else
-  class="leave-content"
->
-  <div v-if="!Object.keys(balances).length" class="empty-balance">
-    No leave allocated.
-  </div>
-
-  <div v-else class="balance-grid">
-
-    <div
-      v-for="(balance, type) in balances"
-      :key="type"
-      class="balance-card"
-    >
-
-      <div class="balance-top">
-        <span class="balance-type">
-          {{ type }}
-        </span>
-
-        <span class="balance-available">
-          {{ balance.remaining_leaves }}
-          <small>
-            /{{ balance.total_leaves }} left
-          </small>
-        </span>
-      </div>
-
-      <div class="progress">
         <div
-          :style="{
-            width: balancePercentage(balance) + '%'
-          }"
-        ></div>
-      </div>
-
-      <div class="balance-row">
-        <span>Used</span>
-        <b>{{ balance.leaves_taken }}</b>
-      </div>
-
-      <div class="balance-row">
-        <span>Pending approval</span>
-        <b>{{ balance.leaves_pending_approval }}</b>
-      </div>
-
-    </div>
-
-  </div>
-</section>
-
-    <!-- LEAVE ACTION DIALOG -->
-    <div
-      v-if="actionDialog.open"
-      class="leave-dialog-backdrop"
-      @click.self="closeActionDialog"
-    >
-      <section
-        class="leave-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="leave-dialog-title"
-      >
-        <div class="leave-dialog-header">
-          <div class="leave-dialog-icon">
-            {{ actionDialog.type === 'withdraw' ? '↶' : '✎' }}
+          v-else
+          class="leave-actions-empty"
+        >
+          <div class="leave-actions-empty-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              aria-hidden="true"
+            >
+              <path
+                d="M8 3v3M16 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
+              />
+              <path d="m9 14 2 2 4-4" />
+            </svg>
           </div>
+
+          <h3>No leaves available for action</h3>
+
+          <p>
+            You currently have no pending or future approved leave
+            requests that can be withdrawn or cancelled.
+          </p>
 
           <button
             type="button"
-            class="leave-dialog-close"
-            aria-label="Close dialog"
-            :disabled="actionBusy"
-            @click="closeActionDialog"
+            class="leave-actions-empty-btn"
+            @click="router.push('/leaves')"
           >
-            ×
+            View Leave History
           </button>
         </div>
 
-        <h2 id="leave-dialog-title">
+      </div>
+
+    </main>
+
+    <!-- ACTION DIALOG -->
+    <div
+      v-if="actionDialog.open"
+      class="dialog-backdrop"
+      @click.self="closeActionDialog"
+    >
+      <section class="dialog">
+
+        <div class="dialog-icon">
+          {{ actionDialog.type === 'withdraw' ? '↶' : '✎' }}
+        </div>
+
+        <button
+          type="button"
+          class="dialog-close"
+          @click="closeActionDialog"
+        >
+          ×
+        </button>
+
+        <h2>
           {{
             actionDialog.type === 'withdraw'
               ? 'Withdraw leave request?'
@@ -1235,7 +1643,7 @@ async function loadLeaves() {
           }}
         </h2>
 
-        <p class="leave-dialog-description">
+        <p>
           {{
             actionDialog.type === 'withdraw'
               ? 'This will withdraw your pending leave application.'
@@ -1243,45 +1651,43 @@ async function loadLeaves() {
           }}
         </p>
 
-        <div class="leave-dialog-details">
-          <strong>{{ actionDialog.leave?.leave_type }}</strong>
+        <div class="dialog-details">
+          <strong>
+            {{ actionDialog.leave?.leave_type }}
+          </strong>
+
           <span>
             {{ actionDialog.leave?.from_date }}
-            to {{ actionDialog.leave?.to_date }}
+            to
+            {{ actionDialog.leave?.to_date }}
           </span>
         </div>
 
         <label
           v-if="actionDialog.type === 'cancel'"
-          class="leave-dialog-field"
+          class="dialog-field"
         >
           <span>Reason for cancellation</span>
+
           <textarea
             v-model="actionDialog.reason"
             rows="4"
             maxlength="1000"
             placeholder="Explain why you need to cancel this leave..."
           ></textarea>
-
-          <small>
-            {{ actionDialog.reason.trim().length }}/1000 characters
-            · Minimum 10
-          </small>
         </label>
 
         <p
           v-if="leavesError"
-          class="leave-dialog-error"
-          role="alert"
+          class="dialog-error"
         >
           {{ leavesError }}
         </p>
 
-        <div class="leave-dialog-actions">
+        <div class="dialog-actions">
+
           <button
             type="button"
-            class="leave-dialog-secondary"
-            :disabled="actionBusy"
             @click="closeActionDialog"
           >
             Cancel
@@ -1289,7 +1695,7 @@ async function loadLeaves() {
 
           <button
             type="button"
-            class="leave-dialog-primary"
+            class="danger-action"
             :disabled="actionBusy"
             @click="confirmAction"
           >
@@ -1297,11 +1703,13 @@ async function loadLeaves() {
               actionBusy
                 ? 'Processing...'
                 : actionDialog.type === 'withdraw'
-                  ? 'Withdraw leave'
-                  : 'Submit cancellation'
+                  ? 'Withdraw Leave'
+                  : 'Submit Cancellation'
             }}
           </button>
+
         </div>
+
       </section>
     </div>
 
@@ -1309,3588 +1717,4726 @@ async function loadLeaves() {
 </template>
 
 <style scoped>
+/* ============================================================
+   PAGE
+   ============================================================ */
+
 .leaves-page {
-  width: 100%;
-  min-width: 0;
-  padding: 28px 32px 48px;
+  min-height: 100%;
   box-sizing: border-box;
+  padding: 24px 32px 40px;
+  background: #f4f7fb;
+  color: #25324a;
 }
 
-.page-header {
-  margin-bottom: 22px;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 28px;
-  color: #172344;
-}
-
-.page-header p {
-  margin: 7px 0 0;
-  color: #69758d;
-  font-size: 14px;
-}
-
-.leave-tabs {
+.leave-header {
   display: flex;
-  width: fit-content;
-  max-width: 100%;
-  gap: 5px;
-  margin-bottom: 24px;
-  padding: 5px;
-  border: 1px solid #e5e9f3;
-  border-radius: 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.eyebrow,
+.card-eyebrow {
+  display: block;
+  color: #6f86a8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.leave-header h1 {
+  margin: 5px 0 4px;
+  color: #192843;
+  font-size: 24px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+
+.leave-header p {
+  margin: 0;
+  color: #8490a3;
+  font-size: 11px;
+}
+
+.header-action {
+  height: 36px;
+  padding: 0 15px;
+  border: 1px solid #d7deea;
+  border-radius: 7px;
   background: white;
-}
-
-.leave-tabs button {
-  border: 0;
-  background: transparent;
-  padding: 10px 18px;
-  border-radius: 8px;
-  color: #69758d;
-  font-weight: 650;
-  font-size: 13px;
+  color: #43516a;
+  font-size: 10px;
+  font-weight: 700;
   cursor: pointer;
+}
+
+.header-action.primary,
+
+.form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 16px;
+  padding: 14px 0 0;
+  border-top: 1px solid #edf0f4;
+}
+
+.form-footer button {
+  flex: 0 0 auto;
+  min-width: 110px;
+  height: 38px;
+  box-sizing: border-box;
+  padding: 0 18px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.leave-tabs button:hover {
-  background: #f3f2ff;
-  color: #5145cd;
+.cancel-button {
+  border: 1px solid #d7deea;
+  background: #fff;
+  color: #43516a;
 }
 
-.leave-tabs button.active {
-  background: #5145cd;
+.cancel-button:hover {
+  background: #f7f9fc;
+}
+
+
+.submit-button {
+  border-color: #2874e8;
+  background: #2874e8;
   color: white;
 }
 
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(310px, 1fr);
-  gap: 24px;
-  align-items: start;
-  width: 100%;
-  justify-content: stretch;
-}
+/* ============================================================
+   TABS
+   ============================================================ */
 
-.panel {
-  min-width: 0;
-  box-sizing: border-box;
+.tabs {
+  display: flex;
+  width: fit-content;
+  margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
   background: white;
-  border: 1px solid #e4e9f3;
-  border-radius: 16px;
-  box-shadow: 0 4px 18px rgba(22, 37, 76, .045);
 }
 
-.form-panel {
-  padding: 30px;
+.tabs button {
+  min-width: 105px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #68758b;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  background: #173b78;
+  color: #ffffff;
+}
+
+/* ============================================================
+   MAIN APPLY LAYOUT
+   ============================================================ */
+
+.apply-layout {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 348px !important;
+  grid-template-rows: auto !important;
+  column-gap: 20px !important;
+  row-gap: 20px !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  align-items: start !important;
+  justify-content: stretch !important;
+}
+
+.apply-layout > .request-card {
+  grid-column: 1 !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  justify-self: stretch !important;
+}
+
+.apply-layout > .right-column {
+  grid-column: 2 !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  justify-self: stretch !important;
+}
+
+/* ============================================================
+   REQUEST CARD
+   ============================================================ */
+
+.request-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e0e6ef;
+  border-radius: 9px;
+  background: white;
+  box-shadow: 0 2px 8px rgba(25, 45, 75, .035);
+}
+
+.request-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 17px 18px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.sparkle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 7px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 15px;
+}
+
+.request-card-heading h2 {
+  margin: 3px 0;
+  color: #27344a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.request-card-heading p {
+  margin: 0;
+  color: #8a96a8;
+  font-size: 9px;
+}
+
+.form-section {
+  padding: 17px 18px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.form-section.last {
+  border-bottom: 0;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.section-heading > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  background: #eaf2ff;
+  color: #2874e8;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.section-heading h3 {
+  margin: 1px 0 3px;
+  color: #2c3950;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.section-heading h3 em {
+  color: #9aa4b2;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.section-heading p {
+  margin: 0;
+  color: #8d98a9;
+  font-size: 8px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.field {
+  display: block;
+  min-width: 0;
+}
+
+.field > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #4d5a70;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.field > span b {
+  color: #df5360;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d6dee9;
+  border-radius: 6px;
+  outline: none;
+  background: white;
+  color: #354157;
+  font-size: 9px;
+}
+
+.field input,
+.field select {
+  height: 37px;
+  padding: 0 10px;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: #79a4e9;
+  box-shadow: 0 0 0 3px rgba(40, 116, 232, .07);
+}
+
+.field small {
+  display: block;
+  margin-top: 5px;
+  color: #9aa4b2;
+  font-size: 7px;
+}
+
+/* ============================================================
+   DURATION
+   ============================================================ */
+
+.duration-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.days-box {
+  display: flex;
+  min-height: 70px;
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  padding: 11px 13px;
+  border-radius: 6px;
+  background: #f5f7fa;
+}
+
+.days-box span,
+.session-box > span {
+  color: #6d788b;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.days-box strong {
+  margin-top: 4px;
+  color: #26344b;
+  font-size: 12px;
+}
+
+.days-box small {
+  margin-top: 3px;
+  color: #9aa4b2;
+  font-size: 7px;
+}
+
+.session-box {
+  display: flex;
+  min-height: 70px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.session-box > span {
+  margin-bottom: 2px;
+}
+
+.session-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  color: #596579;
+  font-size: 8px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.session-option input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: #2874e8;
+}
+
+.session-option.selected {
+  color: #334157;
+  font-weight: 650;
+}
+
+.session-option input:disabled {
+  opacity: .9;
+}
+
+/* ============================================================
+   SUPPORTING INFO
+   ============================================================ */
+
+.support-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 51px;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px dashed #ccd7e5;
+  border-radius: 7px;
+  background: #fbfcfe;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.support-box:hover {
+  border-color: #2874e8;
+  background: #f8fbff;
+}
+
+.support-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 13px;
+}
+
+.support-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.support-copy strong {
+  display: block;
+  overflow: hidden;
+  color: #334157;
+  font-size: 9px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.support-copy p {
+  margin: 3px 0 0;
+  color: #8a96a8;
+  font-size: 7px;
+}
+
+.support-action {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid #d7e2f2;
+  border-radius: 6px;
+  background: #fff;
+  color: #2874e8;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.support-file-input {
+  display: none;
+}
+
+/* ============================================================
+   RIGHT COLUMN
+   ============================================================ */
+
+.right-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-card {
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid #e0e6ef;
+  border-radius: 9px;
+  background: white;
+  box-shadow: 0 2px 8px rgba(25, 45, 75, .03);
+}
+
+.side-header,
+.side-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.side-header {
+  margin-bottom: 12px;
+}
+
+.side-header h3,
+.side-title h3 {
+  margin: 0;
+  color: #29364c;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.side-header button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2874e8;
+  font-size: 7px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.balance-list {
+  display: flex;
+  max-height: 330px;
+  flex-direction: column;
+  gap: 17px;
+  overflow-y: auto;
+  padding-right: 3px;
+  scrollbar-width: none;
+}
+
+.balance-list::-webkit-scrollbar {
+  display: none;
+}
+
+.balance-item {
+  min-width: 0;
+}
+
+.balance-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.balance-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.balance-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  box-sizing: border-box;
+  border-radius: 9px;
+}
+
+.balance-icon svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.balance-icon > span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.balance-name > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #172238;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.balance-code {
+  flex: 0 0 auto;
+  color: #526078;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.balance-top > b {
+  flex: 0 0 auto;
+  color: #202c40;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.balance-track {
+  width: calc(100% - 47px);
+  height: 7px;
+  margin-top: 8px;
+  margin-left: 47px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #d5dbe4;
+}
+
+.balance-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.balance-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  margin-left: 47px;
+  color: #66748a;
+  font-size: 7.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.policy-card ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 14px;
+  color: #697586;
+}
+
+.policy-card li {
+  font-size: 7px;
+  line-height: 1.45;
+}
+
+/* ============================================================
+   CALENDAR
+   ============================================================ */
+
+.calendar-header {
+  display: grid;
+  grid-template-columns: 25px 1fr 25px;
+  align-items: center;
+  margin: 3px 0 9px;
+}
+
+.calendar-header button {
+  width: 25px;
+  height: 25px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #697586;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.calendar-header strong {
+  text-align: center;
+  color: #3d495d;
+  font-size: 8px;
+}
+
+.weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.weekdays {
+  margin-bottom: 5px;
+}
+
+.weekdays span {
+  color: #929cad;
+  font-size: 6px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.calendar-grid {
+  row-gap: 3px;
+}
+
+.calendar-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  margin: auto;
+  border-radius: 6px;
+  color: #596579;
+  font-size: 7px;
+}
+
+.calendar-day.outside {
+  color: #d1d6de;
+}
+
+.calendar-day.today {
+  border: 1px solid #2874e8;
+  color: #2874e8;
+  font-weight: 800;
+}
+
+.calendar-day.selected {
+  background: #2874e8;
+  color: white;
+  font-weight: 800;
+}
+
+.calendar-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #edf0f4;
+  color: #929cad;
+  font-size: 6px;
+}
+
+.calendar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.calendar-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.leave-dot {
+  background: #2874e8;
+}
+
+.weekend-dot {
+  background: #e8edf3;
+}
+
+/* ============================================================
+   SECONDARY PAGES
+   ============================================================ */
+
+.secondary-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.stat-card,
+.history-card,
+.action-card,
+.large-balance-card {
+  border: 1px solid #e0e6ef;
+  border-radius: 9px;
+  background: white;
+  box-shadow: 0 2px 8px rgba(25,45,75,.03);
+}
+
+.stat-card {
+  padding: 16px;
+}
+
+.stat-card span,
+.stat-card small {
+  color: #8792a4;
+  font-size: 8px;
+}
+
+.stat-card strong {
+  display: block;
+  margin: 7px 0 3px;
+  color: #26344b;
+  font-size: 22px;
+}
+
+.history-card,
+.action-card {
+  padding: 18px;
+}
+
+.history-header,
+.action-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.history-header h2,
+.action-header h2 {
+  margin: 0;
+  color: #29364c;
+  font-size: 14px;
+}
+
+.history-header p,
+.action-header p {
+  margin: 4px 0 0;
+  color: #8b96a8;
+  font-size: 9px;
+}
+
+.history-header > span,
+.action-header > strong {
+  color: #2874e8;
+  font-size: 9px;
+}
+
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+
+
+.history-toolbar input,
+.action-search input {
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  outline: none;
+  font-size: 9px;
+}
+
+.action-search label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #697586;
+  font-size: 8px;
+}
+
+.action-search button {
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid #2874e8;
+  border-radius: 6px;
+  background: #2874e8;
+  color: white;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.action-search .clear-action {
+  border-color: #d7dee8;
+  background: white;
+  color: #697586;
+}
+
+.empty-state {
+  padding: 35px;
+  text-align: center;
+  color: #8a96a8;
+  font-size: 10px;
+}
+
+.empty-state strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #445168;
+}
+
+/* ============================================================
+   DIALOG
+   ============================================================ */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 30, 48, .42);
+}
+
+.dialog {
+  position: relative;
+  width: min(430px, 100%);
+  box-sizing: border-box;
+  padding: 22px;
+  border-radius: 11px;
+  background: white;
+  box-shadow: 0 18px 50px rgba(15, 25, 45, .2);
+}
+
+.dialog-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 17px;
+}
+
+.dialog-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  border: 0;
+  background: transparent;
+  color: #8792a4;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.dialog h2 {
+  margin: 16px 0 7px;
+  color: #29364c;
+  font-size: 16px;
+}
+
+.dialog > p {
+  margin: 0 0 14px;
+  color: #7d889a;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.dialog-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 11px;
+  border-radius: 7px;
+  background: #f5f7fa;
+}
+
+.dialog-details strong {
+  color: #39465c;
+  font-size: 9px;
+}
+
+.dialog-details span {
+  color: #8994a6;
+  font-size: 8px;
+}
+
+.dialog-field {
+  display: block;
+}
+
+.dialog-field > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #4e5b70;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.dialog-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.dialog-error {
+  margin-top: 10px !important;
+  color: #c33f4b !important;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 17px;
+}
+
+.dialog-actions button {
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: white;
+  color: #697586;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.dialog-actions .danger-action {
+  border-color: #2874e8;
+  background: #2874e8;
+  color: white;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 1100px) {
+  .apply-layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 850px) {
+  .leaves-page {
+    padding: 18px;
+  }
+
+  .apply-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid,
+  .duration-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .leave-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tabs {
+    width: 100%;
+  }
+
+  .tabs button {
+    min-width: 0;
+    flex: 1;
+    padding: 0 8px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-toolbar,
+  .action-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* APPLY LEAVE DENSITY PASS */
+
+.leaves-page {
+  padding-top: 18px;
+  padding-bottom: 28px;
+}
+
+.request-card {
+  padding-top: 28px;
+  padding-bottom: 18px;
+}
+
+.request-card form {
+  gap: 0;
+}
+
+.request-card .section-header {
+  margin-bottom: 12px;
+}
+
+.request-card .form-section {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.request-card .form-section + .form-section {
+  margin-top: 0;
+}
+
+.request-card label {
+  margin-bottom: 5px;
+}
+
+.request-card input,
+.request-card select,
+.request-card textarea {
+  min-height: 38px;
+  height: 38px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.request-card textarea {
+  height: auto;
+  min-height: 72px;
+}
+
+.request-card .field-help,
+.request-card .helper-text,
+.request-card small {
+  margin-top: 4px;
+  line-height: 1.25;
+}
+
+.request-card .duration-grid {
+  gap: 12px;
+}
+
+.request-card .date-fields,
+.request-card .fields-row,
+.request-card .form-row {
+  gap: 12px;
+}
+
+.request-card .total-days,
+.request-card .days-summary {
+  min-height: 72px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.request-card .leave-session {
+  gap: 7px;
+}
+
+.request-card .radio-option {
+  min-height: 24px;
+}
+
+.request-card .support-box {
+  min-height: 52px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.request-card .support-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.form-footer {
+  margin-top: 10px;
+  padding-top: 11px;
+}
+
+.form-footer button {
+  height: 36px;
+}
+
+.right-column {
+  gap: 10px;
+}
+
+.policy-card {
+  padding: 16px 17px !important;
+  border-radius: 9px !important;
+  background: #ffffff;
+  border: 1px solid #dce3ec;
+  box-shadow: 0 2px 7px rgba(24, 45, 75, 0.035);
+}
+
+.policy-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 13px;
+}
+
+.policy-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #edf4ff;
+  color: #2874e8;
+}
+
+.policy-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.policy-header h3 {
+  margin: 0;
+  color: #172238;
+  font-size: 10px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.policy-header p {
+  margin: 3px 0 0;
+  color: #7b899d;
+  font-size: 6.5px;
+  line-height: 1.25;
+}
+
+.policy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 !important;
+  padding: 0 0 8px;
+  border-bottom: 1px solid #eef1f5;
+  color: #526078;
+  font-size: 7px !important;
+  line-height: 1.4 !important;
+}
+
+.policy-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.policy-bullet {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 6px;
+  font-weight: 800;
+}
+
+.calendar-card {
+  padding-top: 15px;
+  padding-bottom: 12px;
+}
+
+.calendar-card .calendar-header {
+  margin-bottom: 9px;
+}
+
+.calendar-card .calendar-grid {
+  row-gap: 7px;
+}
+
+.calendar-card .calendar-day {
+  min-height: 24px;
+}
+
+.balance-card {
+  padding-top: 16px;
+  padding-bottom: 15px;
+}
+
+.balance-header {
+  margin-bottom: 14px;
+}
+
+/* END APPLY LEAVE DENSITY PASS */
+
+
+
+/* REFERENCE MATCH PASS */
+
+/* ---------- Main Apply Leave card ---------- */
+
+.request-card {
+  padding: 28px 30px 16px !important;
+  border-radius: 9px !important;
+}
+
+.request-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 17px;
+  border-bottom: 1px solid #e4e8ef;
+}
+
+.request-card-heading .sparkle {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 16px;
+}
+
+.card-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: #5b79a7;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1.1px;
+}
+
+.request-card-heading h2 {
+  margin: 0;
+  color: #18243a;
+  font-size: 17px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.request-card-heading p {
+  margin: 3px 0 0;
+  color: #738198;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+/* ---------- Sections ---------- */
+
+.form-section {
+  padding: 17px 0 !important;
+}
+
+.form-section.last {
+  padding-bottom: 11px !important;
 }
 
 .section-heading {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid #edf0f6;
+  gap: 9px;
+  margin-bottom: 11px;
 }
 
-.heading-icon {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  background: #efedff;
-  color: #5145cd;
-  font-size: 24px;
+.section-heading > span {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 9px;
+  font-weight: 800;
 }
 
-.form-panel h2 {
+.section-heading h3 {
   margin: 0;
-  font-size: 21px;
-  color: #172344;
+  color: #172238;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 800;
 }
 
-.subtitle {
-  margin: 6px 0 0;
-  color: #69758d;
-  font-size: 13px;
+.section-heading p {
+  margin: 2px 0 0;
+  color: #8190a5;
+  font-size: 7px;
+  line-height: 1.3;
 }
 
-.form-fields {
+/* ---------- Fields ---------- */
+
+.field-grid {
   display: grid;
-  gap: 21px;
-  margin-top: 25px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 .field {
   min-width: 0;
 }
 
-.field label {
+.field > span {
   display: block;
-  margin-bottom: 9px;
-  font-size: 13px;
-  font-weight: 650;
-  color: #33415c;
+  margin-bottom: 5px;
+  color: #27344a;
+  font-size: 8px;
+  font-weight: 750;
 }
 
-.field select,
+.field > span b {
+  color: #e05252;
+}
+
 .field input,
-.field textarea {
-  display: block;
+.field select {
   width: 100%;
-  min-width: 0;
+  height: 37px !important;
+  min-height: 37px !important;
   box-sizing: border-box;
-  border: 1px solid #dbe2ee;
-  border-radius: 10px;
-  padding: 12px 13px;
-  font: inherit;
-  font-size: 14px;
+  padding: 0 11px !important;
+  border: 1px solid #cfd8e6 !important;
+  border-radius: 6px !important;
   background: #fff;
-  color: #172344;
+  color: #2a374d;
+  font-size: 8px;
 }
 
-.field select:focus,
-.field input:focus,
-.field textarea:focus {
-  outline: none;
-  border-color: #6b60db;
-  box-shadow: 0 0 0 3px #efedff;
+.field input::placeholder {
+  color: #8c98aa;
 }
 
-.field textarea {
-  resize: vertical;
-  min-height: 112px;
+.field small {
+  display: block;
+  margin-top: 4px;
+  color: #8996a8;
+  font-size: 6.5px;
+  line-height: 1.3;
 }
 
-.date-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+/* ---------- Duration ---------- */
+
+.duration-row {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 14px !important;
+  margin-top: 12px !important;
+  align-items: start !important;
 }
+
+.days-box {
+  min-height: 70px !important;
+  height: 70px !important;
+  box-sizing: border-box;
+  padding: 12px 14px !important;
+  border-radius: 6px !important;
+  background: #f4f6f9 !important;
+}
+
+.days-box > span,
+.session-box > span {
+  display: block;
+  color: #64738a;
+  font-size: 7px;
+  font-weight: 650;
+}
+
+.days-box strong {
+  display: block;
+  margin-top: 3px;
+  color: #1b2a41;
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.days-box small {
+  display: block;
+  margin-top: 3px;
+  color: #8996a8;
+  font-size: 6px;
+  line-height: 1.2;
+}
+
+.session-box {
+  padding-top: 1px;
+}
+
+.session-box > span {
+  margin-bottom: 5px;
+}
+
+.session-option {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  min-height: 23px !important;
+  margin: 0 !important;
+  color: #40506a;
+  font-size: 7.5px;
+}
+
+.session-option input {
+  width: 13px !important;
+  height: 13px !important;
+  min-height: 13px !important;
+  margin: 0;
+  accent-color: #2874e8;
+}
+
+/* ---------- Supporting document ---------- */
+
+.support-box {
+  min-height: 52px !important;
+  height: 52px !important;
+  box-sizing: border-box;
+  padding: 8px 11px !important;
+  border: 1px dashed #c8d5e7 !important;
+  border-radius: 7px !important;
+}
+
+.support-icon {
+  width: 29px !important;
+  height: 29px !important;
+  flex: 0 0 29px !important;
+  border-radius: 7px !important;
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+}
+
+.support-copy strong {
+  color: #34445d;
+  font-size: 7.5px;
+}
+
+.support-copy p {
+  margin-top: 2px !important;
+  color: #8996a8;
+  font-size: 6px;
+}
+
+.support-action {
+  min-width: 47px;
+  height: 27px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid #cbd7e7;
+  border-radius: 6px;
+  color: #2874e8;
+  background: #fff;
+  font-size: 7px;
+  font-weight: 750;
+}
+
+/* ---------- Footer ---------- */
 
 .form-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  border-top: 1px solid #edf0f6;
-  padding-top: 23px;
-  margin-top: 26px;
-}
-
-.footer-note {
-  color: #8994a9;
-  font-size: 12px;
-  margin: 0;
-  max-width: 230px;
+  margin-top: 9px !important;
+  padding-top: 10px !important;
 }
 
 .form-footer button {
-  border: 0;
-  border-radius: 10px;
-  background: #5145cd;
-  color: white;
-  font-weight: 700;
-  font-size: 13px;
-  padding: 13px 20px;
-  cursor: pointer;
+  height: 35px !important;
+  min-width: 95px !important;
+  padding: 0 16px !important;
+  border-radius: 6px !important;
+  font-size: 8px !important;
 }
 
-.form-footer button:hover:not(:disabled) {
-  background: #4135ba;
+.submit-button {
+  min-width: 125px !important;
 }
 
-.form-footer button:disabled {
-  opacity: .55;
-  cursor: not-allowed;
+/* ---------- Right sidebar ---------- */
+
+.right-column {
+  gap: 10px !important;
+}
+
+.side-card {
+  border-radius: 9px !important;
+}
+
+/* ---------- Balance ---------- */
+
+.balance-card {
+  padding: 15px 16px !important;
+}
+
+.balance-header {
+  margin-bottom: 13px !important;
+}
+
+.balance-header h3 {
+  font-size: 13px !important;
+}
+
+.balance-header button {
+  font-size: 7px !important;
+}
+
+/* ---------- Policy ---------- */
+
+.policy-card {
+  padding: 13px 16px !important;
+}
+
+.policy-card h3 {
+  font-size: 9px !important;
+}
+
+.policy-card li {
+  margin-bottom: 4px !important;
+  font-size: 6.5px !important;
+  line-height: 1.3 !important;
+}
+
+/* ---------- Calendar ---------- */
+
+.calendar-card {
+  padding: 13px 16px 10px !important;
+}
+
+.calendar-card .calendar-header {
+  margin-bottom: 7px !important;
+}
+
+.calendar-card .calendar-grid {
+  row-gap: 5px !important;
+}
+
+/* END REFERENCE MATCH PASS */
+
+
+/* ============================================================
+   FINAL DATE PREVIEW CALENDAR
+   ============================================================ */
+
+.calendar-card {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  align-self: start !important;
+  box-sizing: border-box !important;
+  padding: 15px 16px 12px !important;
+  overflow: hidden !important;
+}
+
+.calendar-card .side-title {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  margin-bottom: 12px !important;
+}
+
+.calendar-card .side-title > span {
+  width: 25px !important;
+  height: 25px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 7px !important;
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+  font-size: 10px !important;
+}
+
+.calendar-card .side-title h3 {
+  margin: 0 !important;
+  color: #172238 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-header {
+  display: grid !important;
+  grid-template-columns: 28px 1fr 28px !important;
+  align-items: center !important;
+  margin: 0 0 9px !important;
+}
+
+.calendar-card .calendar-header button {
+  width: 26px !important;
+  height: 26px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: #627087 !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+}
+
+.calendar-card .calendar-header button:hover {
+  background: #f1f5fa !important;
+  color: #2874e8 !important;
+}
+
+.calendar-card .calendar-header strong {
+  text-align: center !important;
+  color: #26344b !important;
+  font-size: 9px !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .weekdays {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  margin-bottom: 5px !important;
+}
+
+.calendar-card .weekdays span {
+  color: #8a96a8 !important;
+  font-size: 6.5px !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+}
+
+.calendar-card .calendar-grid {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  row-gap: 3px !important;
+}
+
+.calendar-card .calendar-day {
+  width: 25px !important;
+  height: 25px !important;
+  min-height: 25px !important;
+  margin: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 7px !important;
+  color: #526075 !important;
+  font-size: 7px !important;
+  font-weight: 600 !important;
+  box-sizing: border-box !important;
+}
+
+.calendar-card .calendar-day.outside {
+  color: #cbd2dc !important;
+}
+
+.calendar-card .calendar-day.today {
+  border: 1px solid #2874e8 !important;
+  background: #fff !important;
+  color: #2874e8 !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-day.selected {
+  background: #2874e8 !important;
+  border: 1px solid #2874e8 !important;
+  color: #fff !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-legend {
+  display: flex !important;
+  align-items: center !important;
+  gap: 14px !important;
+  margin-top: 9px !important;
+  padding-top: 8px !important;
+  border-top: 1px solid #edf0f4 !important;
+  color: #8a96a8 !important;
+  font-size: 6px !important;
+}
+
+.calendar-card .calendar-legend span {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.calendar-card .calendar-legend i {
+  width: 6px !important;
+  height: 6px !important;
+  flex: 0 0 6px !important;
+  border-radius: 50% !important;
+}
+
+.calendar-card .leave-dot {
+  background: #2874e8 !important;
+}
+
+.calendar-card .weekend-dot {
+  background: #dfe5ed !important;
+}
+
+/* prevent the calendar from stretching vertically */
+.right-column .calendar-card {
+  flex: 0 0 auto !important;
+}
+
+
+/* ---------- FINAL CALENDAR WIDTH + HEADER FIX ---------- */
+
+.calendar-card {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  align-self: stretch !important;
+  flex: 0 0 auto !important;
+}
+
+.calendar-card .side-title {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 9px !important;
+  margin-bottom: 12px !important;
+}
+
+.calendar-card .side-title > span {
+  width: 27px !important;
+  height: 27px !important;
+  flex: 0 0 27px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 7px !important;
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+  font-size: 10px !important;
+}
+
+.calendar-card .side-title h3 {
+  margin: 0 !important;
+  color: #172238 !important;
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-header {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  grid-template-columns: 28px 1fr 28px !important;
+  margin: 0 0 9px !important;
+}
+
+.calendar-card .weekdays,
+.calendar-card .calendar-grid {
+  width: 100% !important;
+}
+
+.calendar-card .calendar-day {
+  width: 27px !important;
+  height: 27px !important;
+  min-height: 27px !important;
+}
+
+.calendar-card .calendar-legend {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+
+/* ---------- Right sidebar order ---------- */
+
+.right-column > .balance-card {
+  order: 1 !important;
+}
+
+.right-column > .calendar-card {
+  order: 2 !important;
+}
+
+.right-column > .policy-card {
+  order: 3 !important;
+}
+
+
+
+
+
+/* CONTROLLED DESKTOP SCALE */
+
+.leaves-page {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 28px 32px 40px !important;
+}
+
+.apply-layout {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 360px !important;
+  column-gap: 22px !important;
+  width: 100% !important;
+  max-width: none !important;
+  align-items: start !important;
+}
+
+.request-card {
+  width: 100% !important;
+  box-sizing: border-box;
+  padding: 30px 32px 26px !important;
 }
 
 .right-column {
-  display: grid;
-  gap: 20px;
-  min-width: 0;
+  width: 360px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
 }
 
-.balance-panel,
-.summary-panel {
-  padding: 26px;
+/* MAIN FORM */
+
+.request-card-heading {
+  margin: -30px -32px 22px !important;
+  padding: 26px 32px !important;
+  gap: 14px !important;
+  background: #1d2b50 !important;
+  border-radius: 10px 10px 0 0 !important;
+  box-sizing: border-box !important;
 }
 
-.side-eyebrow {
+.request-card-heading .sparkle {
+  width: 40px !important;
+  height: 40px !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #ffffff !important;
+}
+
+.card-eyebrow {
+  font-size: 10px !important;
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.request-card-heading h2 {
+  font-size: 21px !important;
+  margin: 3px 0 4px !important;
+  color: #ffffff !important;
+}
+
+.request-card-heading p {
+  font-size: 10px !important;
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.form-section {
+  padding: 21px 0 !important;
+}
+
+.section-heading {
+  margin-bottom: 17px !important;
+  gap: 11px !important;
+}
+
+.section-heading > span {
+  width: 28px !important;
+  height: 28px !important;
+  flex: 0 0 28px !important;
+}
+
+.section-heading h3 {
+  font-size: 14px !important;
+}
+
+.section-heading p {
+  font-size: 9px !important;
+}
+
+.field-grid {
+  gap: 16px !important;
+}
+
+.field > span {
+  font-size: 10px !important;
+  margin-bottom: 7px !important;
+}
+
+.field input,
+.field select {
+  height: 43px !important;
+  min-height: 43px !important;
+  padding: 0 13px !important;
+  font-size: 11px !important;
+}
+
+.field small {
+  font-size: 8px !important;
+  margin-top: 5px !important;
+}
+
+.duration-row {
+  gap: 16px !important;
+  margin-top: 17px !important;
+}
+
+.days-box {
+  min-height: 84px !important;
+  padding: 16px !important;
+}
+
+.days-box > span,
+.session-box > span {
+  font-size: 9px !important;
+}
+
+.days-box strong {
+  font-size: 16px !important;
+  margin-top: 4px !important;
+}
+
+.days-box small {
+  font-size: 8px !important;
+}
+
+.session-option {
+  min-height: 28px !important;
+  font-size: 9px !important;
+}
+
+/* SUPPORTING DOCUMENT */
+
+.support-box {
+  min-height: 62px !important;
+  padding: 10px 13px !important;
+}
+
+.support-icon {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+.support-copy strong {
+  font-size: 9px !important;
+}
+
+.support-copy p {
+  font-size: 7px !important;
+}
+
+.support-action {
+  min-width: 62px !important;
+  height: 32px !important;
+  font-size: 8px !important;
+}
+
+/* FOOTER */
+
+.form-footer {
+  margin-top: 18px !important;
+  padding-top: 16px !important;
+}
+
+.form-footer button {
+  min-width: 108px !important;
+  height: 40px !important;
+  font-size: 9px !important;
+}
+
+/* LEAVE BALANCE */
+
+.balance-card {
+  width: 100% !important;
+  padding: 18px !important;
+  box-sizing: border-box;
+}
+
+.balance-header {
+  margin-bottom: 16px !important;
+}
+
+.balance-header h3 {
+  font-size: 14px !important;
+}
+
+.balance-header button {
+  font-size: 8px !important;
+}
+
+.balance-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
+  max-height: 365px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding-right: 3px !important;
+}
+
+.balance-row {
+  gap: 10px !important;
+}
+
+.balance-identity {
+  gap: 10px !important;
+}
+
+.balance-icon {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
+}
+
+.balance-label strong {
+  font-size: 9px !important;
+}
+
+.balance-code {
+  font-size: 8px !important;
+}
+
+.balance-total {
+  font-size: 9px !important;
+}
+
+.balance-progress-row {
+  margin-top: 7px !important;
+  margin-left: 44px !important;
+}
+
+.balance-track {
+  height: 6px !important;
+}
+
+.balance-caption {
+  margin-left: 44px !important;
+  font-size: 6px !important;
+}
+
+/* CALENDAR */
+
+.right-column > section:nth-child(2) {
+  width: 100% !important;
+  min-height: 330px !important;
+  padding: 18px !important;
+  box-sizing: border-box;
+}
+
+.right-column > section:nth-child(2) h3 {
+  font-size: 13px !important;
+}
+
+.right-column > section:nth-child(2) th {
+  padding: 7px 2px !important;
+  font-size: 8px !important;
+}
+
+.right-column > section:nth-child(2) td {
+  padding: 7px 2px !important;
+  font-size: 9px !important;
+}
+
+/* Keep desktop proportions */
+@media (min-width: 1400px) {
+  .apply-layout {
+    grid-template-columns: minmax(0, 1fr) 370px !important;
+  }
+
+  .right-column {
+    width: 370px !important;
+  }
+}
+
+@media (max-width: 1000px) {
+  .apply-layout {
+    grid-template-columns: minmax(0, 1fr) 330px !important;
+  }
+
+  .right-column {
+    width: 330px !important;
+  }
+}
+
+@media (max-width: 850px) {
+  .apply-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .right-column {
+    width: 100% !important;
+  }
+}
+
+
+
+/* ============================================================
+   DATE PREVIEW - LARGER DESKTOP CALENDAR
+   ============================================================ */
+
+.calendar-card {
+  width: 100% !important;
+  min-height: 390px !important;
+  padding: 22px !important;
+  box-sizing: border-box !important;
+}
+
+/* Header */
+.calendar-card .side-title {
+  margin-bottom: 18px !important;
+}
+
+.calendar-card .side-title > span {
+  width: 32px !important;
+  height: 32px !important;
+  flex: 0 0 32px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+}
+
+.calendar-card .side-title h3 {
+  font-size: 14px !important;
+}
+
+/* Month navigation */
+.calendar-card .calendar-header {
+  grid-template-columns: 34px 1fr 34px !important;
+  margin-bottom: 14px !important;
+}
+
+.calendar-card .calendar-header button {
+  width: 30px !important;
+  height: 30px !important;
+  font-size: 18px !important;
+}
+
+.calendar-card .calendar-header strong {
+  font-size: 11px !important;
+}
+
+/* Weekday labels */
+.calendar-card .weekdays {
+  margin-bottom: 8px !important;
+}
+
+.calendar-card .weekdays span {
+  font-size: 8px !important;
+}
+
+/* Calendar grid */
+.calendar-card .calendar-grid {
+  row-gap: 6px !important;
+}
+
+.calendar-card .calendar-day {
+  width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 8px !important;
+  font-size: 9px !important;
+}
+
+/* Legend */
+.calendar-card .calendar-legend {
+  margin-top: 14px !important;
+  padding-top: 11px !important;
+  font-size: 8px !important;
+}
+
+.calendar-card .calendar-legend i {
+  width: 7px !important;
+  height: 7px !important;
+  flex-basis: 7px !important;
+}
+
+
+/* DATE PREVIEW HEADER ICON */
+.calendar-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.calendar-title h3 {
+  margin: 0 !important;
+  color: #17233f !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+}
+
+.calendar-title-icon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 30px !important;
+  height: 30px !important;
+  flex: 0 0 30px !important;
+  box-sizing: border-box !important;
+  border-radius: 8px !important;
+  background: #eef4ff !important;
+  color: #2874e8 !important;
+}
+
+.calendar-title-icon svg {
+  width: 17px !important;
+  height: 17px !important;
+  display: block !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.calendar-title-icon svg rect {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+.calendar-title-icon svg path {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+
+
+/* WITHDRAW / CANCEL LEAVE */
+.header-action.primary {
+  min-width: 155px !important;
+  height: 42px !important;
+  padding: 0 20px !important;
+  border: 1px solid #dc2626 !important;
+  border-radius: 8px !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  line-height: 42px !important;
+  box-sizing: border-box !important;
+  box-shadow: 0 2px 5px rgba(220, 38, 38, 0.16) !important;
+}
+
+.header-action.primary:hover {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
+}
+
+
+/* WITHDRAW / CANCEL LEAVE BUTTON */
+.header-action {
+  min-width: 170px !important;
+  height: 44px !important;
+  padding: 0 22px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #dc2626 !important;
+  border-radius: 8px !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  line-height: 44px !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.18) !important;
+}
+
+.header-action:hover {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
+}
+
+
+/* LEAVE TABS — LARGER CARD */
+.tabs {
+  width: 340px !important;
+  height: 48px !important;
+  padding: 4px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 3px !important;
+  border: 1px solid #dce3ee !important;
+  border-radius: 9px !important;
+  background: #ffffff !important;
+}
+
+.tabs button {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  height: 40px !important;
+  padding: 0 15px !important;
+  border-radius: 7px !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+}
+
+.tabs button.active {
+  background: #173f82 !important;
+  color: #ffffff !important;
+}
+
+
+/* ============================================================
+   MY LEAVES — ENTERPRISE UI POLISH
+   ============================================================ */
+
+.secondary-page {
+  width: 100% !important;
+  max-width: none !important;
+  gap: 18px !important;
+}
+
+/* TOP LEAVE TABS */
+.tabs,
+.leave-tabs {
+  width: 430px !important;
+  min-height: 48px !important;
+  padding: 4px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 3px !important;
+  border: 1px solid #dce3ee !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 7px rgba(24, 43, 72, .04) !important;
+}
+
+.tabs button,
+.leave-tabs button {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  height: 40px !important;
+  padding: 0 18px !important;
+  border: 0 !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+  color: #66748a !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  transition: .18s ease !important;
+}
+
+.tabs button:hover,
+.leave-tabs button:hover {
+  background: #f3f7fd !important;
+  color: #244b84 !important;
+}
+
+.tabs button.active,
+.leave-tabs button.active {
+  background: #173f82 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 5px rgba(23, 63, 130, .18) !important;
+}
+
+
+/* SUMMARY CARDS */
+.stats-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+}
+
+.stat-card {
+  min-height: 112px !important;
+  padding: 19px 20px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #dfe5ee !important;
+  border-radius: 11px !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 9px rgba(25, 45, 75, .035) !important;
+  transition: transform .18s ease, box-shadow .18s ease !important;
+}
+
+.stat-card:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 5px 15px rgba(25, 45, 75, .07) !important;
+}
+
+.stat-card span {
+  color: #7b8799 !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: .45px !important;
+}
+
+.stat-card strong {
+  margin: 10px 0 5px !important;
+  color: #182943 !important;
+  font-size: 27px !important;
+  line-height: 1 !important;
+  font-weight: 800 !important;
+}
+
+.stat-card small {
+  color: #98a3b3 !important;
+  font-size: 8px !important;
+}
+
+
+/* LEAVE HISTORY CARD */
+.history-card {
+  padding: 22px !important;
+  border: 1px solid #dfe5ee !important;
+  border-radius: 12px !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(25, 45, 75, .035) !important;
+}
+
+.history-header {
+  margin-bottom: 18px !important;
+}
+
+.history-header h2 {
+  color: #182943 !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+}
+
+.history-header p {
+  margin-top: 5px !important;
+  color: #8793a6 !important;
+  font-size: 9px !important;
+}
+
+.history-header > span {
+  padding: 6px 10px !important;
+  border-radius: 6px !important;
+  background: #f1f5fb !important;
+  color: #4770aa !important;
+  font-size: 8px !important;
+  font-weight: 750 !important;
+}
+
+
+/* FILTER + SEARCH */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar input {
+  height: 38px !important;
+  border: 1px solid #d9e1ec !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  color: #29384f !important;
+  font-size: 9px !important;
+}
+
+.history-toolbar input:focus {
+  border-color: #4d83db !important;
+  box-shadow: 0 0 0 3px rgba(77, 131, 219, .10) !important;
+  outline: none !important;
+}
+
+
+/* KEEP THE TABLE COMFORTABLE */
+.history-card .leave-register {
+  border-radius: 10px !important;
+  border-color: #e1e7ef !important;
+}
+
+.history-card .leave-table th {
+  padding: 14px 18px !important;
+  font-size: 8px !important;
+}
+
+.history-card .leave-table td {
+  padding: 17px 18px !important;
+}
+
+.history-card .leave-type {
+  font-size: 11px !important;
+}
+
+.history-card .leave-reference {
+  font-size: 8px !important;
+}
+
+.history-card .date-primary {
+  font-size: 10px !important;
+}
+
+.history-card .date-secondary {
+  font-size: 8px !important;
+}
+
+.history-card .reason-text {
+  font-size: 9px !important;
+}
+
+.history-card .status-badge {
+  padding: 6px 9px !important;
+  font-size: 8px !important;
+}
+
+.history-card .table-action {
+  padding: 7px 10px !important;
+  font-size: 8px !important;
+}
+
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .tabs,
+  .leave-tabs {
+    width: 100% !important;
+    max-width: 430px !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .history-card {
+    padding: 14px !important;
+  }
+
+  .history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+}
+
+/* FINAL MY LEAVES SEARCH TOOLBAR */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar .filter-tabs {
+  flex: 0 0 auto !important;
+}
+
+.history-toolbar .history-search,
+.history-toolbar input[type="search"],
+.history-toolbar input {
+  flex: 1 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  height: 34px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #dbe2ec !important;
+  border-radius: 6px !important;
+  background: #ffffff !important;
+  color: #26344b !important;
+  font-size: 10px !important;
+  outline: none !important;
+}
+
+.history-toolbar input::placeholder {
+  color: #9aa6b8 !important;
+}
+
+.history-toolbar input:focus {
+  border-color: #7ea8e8 !important;
+  box-shadow: 0 0 0 2px rgba(40, 116, 232, 0.08) !important;
+}
+
+@media (max-width: 760px) {
+  .history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+  .history-toolbar .history-search,
+  .history-toolbar input[type="search"],
+  .history-toolbar input {
+    width: 100% !important;
+  }
+}
+
+</style>
+
+
+
+/* ============================================================
+   DATE PREVIEW
+   ============================================================ */
+
+.calendar-card {
+  padding: 18px !important;
+  border-radius: 12px !important;
+}
+
+.calendar-card .calendar-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin-bottom: 18px !important;
+}
+
+.calendar-card .calendar-title-icon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+}
+
+.calendar-card .calendar-title-icon svg {
+  display: block !important;
+  width: 17px !important;
+  height: 17px !important;
+  min-width: 17px !important;
+  min-height: 17px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  fill: none !important;
+  stroke: #2874e8 !important;
+  stroke-width: 1.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  box-shadow: none !important;
+}
+
+.calendar-card .calendar-title-icon svg rect,
+.calendar-card .calendar-title-icon svg path {
+  fill: none !important;
+  stroke: #2874e8 !important;
+}
+
+.calendar-card .calendar-title h3 {
+  margin: 0 !important;
+  padding: 0 !important;
+  color: #17233f !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+}
+
+/* Calendar navigation */
+
+.calendar-card .calendar-header {
+  display: grid !important;
+  grid-template-columns: 32px 1fr 32px !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin: 0 0 16px !important;
+}
+
+.calendar-card .calendar-header strong {
+  display: block !important;
+  text-align: center !important;
+  color: #17233f !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-header button {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: 1px solid #e0e6ef !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  color: #52627a !important;
+  font-size: 19px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+}
+
+.calendar-card .calendar-header button:hover {
+  border-color: #2874e8 !important;
+  background: #f1f6ff !important;
+  color: #2874e8 !important;
+}
+
+/* Week labels */
+
+.calendar-card .weekdays {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  margin-bottom: 8px !important;
+  text-align: center !important;
+}
+
+.calendar-card .weekdays span {
+  display: block !important;
+  padding: 0 !important;
+  background: transparent !important;
+  color: #8a96a8 !important;
+  font-size: 8px !important;
+  font-weight: 750 !important;
+}
+
+/* Days */
+
+.calendar-card .calendar-grid {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  gap: 6px 3px !important;
+}
+
+.calendar-card .calendar-day {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 30px !important;
+  height: 30px !important;
+  justify-self: center !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: #34435a !important;
+  font-size: 9px !important;
+  font-weight: 650 !important;
+  box-sizing: border-box !important;
+}
+
+.calendar-card .calendar-day.outside {
+  color: #c5ccd6 !important;
+}
+
+.calendar-card .calendar-day.today {
+  color: #2874e8 !important;
+  font-weight: 800 !important;
+}
+
+.calendar-card .calendar-day.selected {
+  border: 1.5px solid #2874e8 !important;
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+  font-weight: 850 !important;
+  box-shadow: 0 2px 5px rgba(40,116,232,.10) !important;
+}
+
+/* Legend */
+
+.calendar-card .calendar-legend {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+  margin-top: 18px !important;
+  padding-top: 12px !important;
+  border-top: 1px solid #edf0f4 !important;
+}
+
+.calendar-card .calendar-legend span {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  background: transparent !important;
+  color: #8792a3 !important;
+  font-size: 7px !important;
+  font-weight: 600 !important;
+}
+
+.calendar-card .calendar-legend i {
+  width: 6px !important;
+  height: 6px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+}
+
+.calendar-card .calendar-legend .leave-dot {
+  background: #2874e8 !important;
+}
+
+.calendar-card .calendar-legend .weekend-dot {
+  background: #d8dee7 !important;
+}
+
+<style>
+/* MY LEAVES - COMPACT RIGHT SEARCH */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar .history-search,
+.history-toolbar input[type="search"],
+.history-toolbar input {
+  flex: 0 0 300px !important;
+  width: 300px !important;
+  max-width: 300px !important;
+  height: 34px !important;
+  margin-left: auto !important;
+}
+</style>
+
+<style>
+/* MY LEAVES - CLEAN STATUS FILTERS */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar .filter-tabs {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 3px !important;
+  border: 1px solid #e1e7ef !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  box-sizing: border-box !important;
+}
+
+.history-toolbar .filter-tabs button {
+  height: 32px !important;
+  min-width: 76px !important;
+  padding: 0 14px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: #64748b !important;
+  font-size: 10px !important;
+  font-weight: 650 !important;
+  cursor: pointer !important;
+}
+
+.history-toolbar .filter-tabs button:hover {
+  background: #f3f6fa !important;
+  color: #24344f !important;
+}
+
+.history-toolbar .filter-tabs button.active {
+  background: #1f4f91 !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar .history-search,
+.history-toolbar input[type="search"],
+.history-toolbar input {
+  flex: 0 0 300px !important;
+  width: 300px !important;
+  max-width: 300px !important;
+  height: 34px !important;
+  margin-left: auto !important;
+  padding: 0 12px !important;
+  border: 1px solid #dbe2eb !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  color: #24344f !important;
+  font-size: 10px !important;
+  box-sizing: border-box !important;
+}
+
+.history-toolbar input::placeholder {
+  color: #9aa6b7 !important;
+}
+
+.history-toolbar input:focus {
+  border-color: #7fa5d8 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(31, 79, 145, 0.08) !important;
+}
+
+/* MY LEAVES - SEARCH ALIGNMENT */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar input[type="search"] {
+  width: 220px !important;
+  max-width: 220px !important;
+  height: 34px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  box-sizing: border-box !important;
+  border: 1.5px solid #b8c7dc !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  color: #24344d !important;
+  box-shadow: 0 1px 3px rgba(31, 56, 88, 0.06) !important;
+  outline: none !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.history-toolbar input[type="search"]:hover {
+  border-color: #8ea5c5 !important;
+}
+
+.history-toolbar input[type="search"]:focus {
+  border-color: #2874e8 !important;
+  box-shadow: 0 0 0 3px rgba(40, 116, 232, 0.12) !important;
+}
+
+
+
+.history-toolbar input[type="search"]:focus {
+  border-color: #8eb1ef !important;
+  box-shadow: 0 0 0 3px rgba(40, 116, 232, 0.08) !important;
+}
+
+
+/* MY LEAVES - SEARCH ICON FIX */
+.enterprise-search {
+  display: flex !important;
+  align-items: center !important;
+  position: relative !important;
+  width: 100% !important;
+}
+
+.enterprise-search svg {
+  width: 17px !important;
+  height: 17px !important;
+  min-width: 17px !important;
+  min-height: 17px !important;
+  max-width: 17px !important;
+  max-height: 17px !important;
+  flex: 0 0 17px !important;
+  display: block !important;
+}
+
+.enterprise-search input {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* MY LEAVES - STATUS CARDS */
+.enterprise-stats {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 14px !important;
+  width: 100% !important;
+  margin-bottom: 22px !important;
+}
+
+.enterprise-stat {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+  min-height: 120px !important;
+  padding: 17px 18px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #e5eaf2 !important;
+  border-radius: 14px !important;
+  background: #ffffff !important;
+  color: #25324a !important;
+  box-shadow: 0 2px 10px rgba(25, 39, 67, .04) !important;
+}
+
+.enterprise-stat .stat-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+
+.enterprise-stat .stat-icon {
+  width: 32px !important;
+  height: 32px !important;
+  flex: 0 0 32px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 9px !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+}
+
+.enterprise-stat > strong {
+  display: block !important;
+  font-size: 28px !important;
+  line-height: 1 !important;
+  font-weight: 800 !important;
+}
+
+.enterprise-stat > small {
+  display: block !important;
+  color: #7b8799 !important;
+  font-size: 10px !important;
+  line-height: 1.3 !important;
+}
+
+.enterprise-stat .total-icon {
+  background: #edf4ff !important;
+  color: #2874e8 !important;
+}
+
+.enterprise-stat .approved-icon {
+  background: #eaf8f1 !important;
+  color: #35a56f !important;
+}
+
+.enterprise-stat .pending-icon {
+  background: #fff5df !important;
+  color: #e9a12d !important;
+}
+
+.enterprise-stat .rejected-icon {
+  background: #fff0f1 !important;
+  color: #e45b62 !important;
+}
+
+/* CLICKABLE LEAVE STATUS CARDS */
+.stat-card-clickable {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.stat-card-clickable:hover {
+  border-color: #c5d5ee !important;
+  box-shadow: 0 5px 16px rgba(31, 67, 112, 0.08) !important;
+  transform: translateY(-1px);
+}
+
+.stat-card-clickable:focus-visible {
+  outline: none;
+  border-color: #2874e8 !important;
+  box-shadow: 0 0 0 3px rgba(40, 116, 232, 0.10) !important;
+}
+
+.stat-card-clickable.active {
+  border-color: #2874e8 !important;
+  box-shadow: 0 0 0 1px rgba(40, 116, 232, 0.08) !important;
+}
+
+
+/* REMOVE SEARCH TOOLBAR CARD */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar input[type="search"] {
+  width: 220px !important;
+  max-width: 220px !important;
+  height: 34px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #dce3ed !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+
+/* FINAL SEARCH TOOLBAR CLEANUP */
+.history-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 12px 0 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.history-toolbar input[type="search"] {
+  width: 220px !important;
+  max-width: 220px !important;
+  height: 34px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  box-sizing: border-box !important;
+  border: 1px solid #dce3ed !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+
+
+/* FINAL SEARCH BAR OVERRIDE */
+.history-toolbar > input[type="search"],
+.history-toolbar input[type="search"] {
+  width: 220px !important;
+  max-width: 220px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 12px !important;
+  margin: 0 !important;
+
+  background: #ffffff !important;
+  border: 2px solid #9db3d0 !important;
+  border-radius: 7px !important;
+
+  color: #1d2d45 !important;
+  outline: none !important;
+  box-shadow: 0 1px 4px rgba(30, 55, 90, 0.08) !important;
+
+  box-sizing: border-box !important;
+}
+
+.history-toolbar > input[type="search"]:hover,
+.history-toolbar input[type="search"]:hover {
+  border-color: #6f8fb9 !important;
+}
+
+.history-toolbar > input[type="search"]:focus,
+.history-toolbar input[type="search"]:focus {
+  border-color: #2874e8 !important;
+  box-shadow: 0 0 0 3px rgba(40, 116, 232, 0.14) !important;
+}
+
+</style>
+
+/* Search placeholder emphasis */
+.history-toolbar input[type="search"]::placeholder {
+  color: #111827 !important;
+  opacity: 1 !important;
+  font-size: 10px !important;
+  font-weight: 650 !important;
+}
+
+
+<style scoped>
+/* FINAL APPLY LEAVE SIDEBAR FIX */
+@media (min-width: 1051px) {
+  .leaves-page .layout > .right-column {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .leaves-page .layout > .right-column .apply-summary-panel {
+    display: block !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 20px !important;
+    border: 1px solid #e4e8f0 !important;
+    border-radius: 16px !important;
+    background: #ffffff !important;
+    box-shadow:
+      0 2px 8px rgba(20, 32, 56, 0.04),
+      0 12px 30px rgba(20, 32, 56, 0.04) !important;
+  }
+
+  .leaves-page .apply-summary-top {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+
+  .leaves-page .apply-summary-eyebrow {
+    display: block !important;
+    margin-bottom: 6px !important;
+    color: #64748b !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  .leaves-page .apply-summary-top h3 {
+    margin: 0 !important;
+    color: #1f2937 !important;
+    font-size: 17px !important;
+    font-weight: 700 !important;
+  }
+
+  .leaves-page .apply-summary-top p {
+    margin: 6px 0 0 !important;
+    color: #7b8798 !important;
+    font-size: 11px !important;
+    line-height: 1.5 !important;
+  }
+
+  .leaves-page .apply-summary-status {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 5px 9px !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 999px !important;
+    background: #f8fafc !important;
+    color: #64748b !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+  }
+
+  .leaves-page .apply-summary-status.ready {
+    border-color: #cde6d8 !important;
+    background: #f0faf4 !important;
+    color: #16875b !important;
+  }
+
+  .leaves-page .apply-summary-list {
+    display: grid !important;
+    margin-top: 18px !important;
+    border-top: 1px solid #edf0f4 !important;
+  }
+
+  .leaves-page .apply-summary-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 15px !important;
+    padding: 13px 0 !important;
+    border-bottom: 1px solid #edf0f4 !important;
+  }
+
+  .leaves-page .apply-summary-row span {
+    color: #8a94a5 !important;
+    font-size: 11px !important;
+  }
+
+  .leaves-page .apply-summary-row strong {
+    color: #33415a !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-align: right !important;
+  }
+
+  .leaves-page .apply-summary-divider {
+    height: 1px !important;
+    margin: 18px 0 !important;
+    background: #edf0f4 !important;
+  }
+
+  .leaves-page .apply-approver-card {
+    display: grid !important;
+    grid-template-columns: 31px minmax(0, 1fr) !important;
+    gap: 10px !important;
+    align-items: start !important;
+    padding: 13px !important;
+    border: 1px solid #e8e9f5 !important;
+    border-radius: 11px !important;
+    background: #fafaff !important;
+  }
+
+  .leaves-page .apply-approver-icon {
+    display: grid !important;
+    width: 31px !important;
+    height: 31px !important;
+    place-items: center !important;
+    border-radius: 8px !important;
+    background: #eeeaff !important;
+    color: #5548da !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+  }
+
+  .leaves-page .apply-approver-card strong {
+    display: block !important;
+    color: #34415a !important;
+    font-size: 11px !important;
+  }
+
+  .leaves-page .apply-approver-card p {
+    margin: 3px 0 0 !important;
+    color: #9099a9 !important;
+    font-size: 10px !important;
+    line-height: 1.5 !important;
+  }
+
+  .leaves-page .apply-summary-note {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    margin-top: 13px !important;
+  }
+
+  .leaves-page .apply-summary-note > span {
+    display: grid !important;
+    width: 20px !important;
+    height: 20px !important;
+    flex-shrink: 0 !important;
+    place-items: center !important;
+    border-radius: 6px !important;
+    background: #f1f3f8 !important;
+    color: #718096 !important;
+    font-size: 9px !important;
+    font-weight: 800 !important;
+  }
+
+  .leaves-page .apply-summary-note p {
+    margin: 1px 0 0 !important;
+    color: #8b95a5 !important;
+    font-size: 10px !important;
+    line-height: 1.5 !important;
+  }
+}
+
+
+.reference-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.reference-side-card {
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e3e8f0;
+  border-radius: 9px;
+  box-shadow: 0 2px 9px rgba(24, 39, 75, .03);
+}
+
+.reference-side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+
+.reference-side-header h3,
+.reference-side-title h3 {
+  margin: 0;
+  color: #26334a;
   font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.1px;
-  color: #7b86a0;
-  margin-bottom: 18px;
+  font-weight: 750;
 }
 
-.balance-item {
-  padding: 16px;
-  border: 1px solid #edf0f6;
-  border-radius: 12px;
-  margin-top: 12px;
+.reference-side-header button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2874e8;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.balance-item.selected {
-  background: #faf9ff;
-  border-color: #d9d3ff;
+/* balance */
+
+.reference-balance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.balance-item-top {
+.reference-balance-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.balance-item-name {
-  font-size: 14px;
-  font-weight: 700;
-  color: #253352;
+.reference-balance-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #405069;
+  font-size: 8px;
+  font-weight: 650;
 }
 
-.selected-tag {
-  font-size: 10px;
-  font-weight: 750;
-  padding: 5px 8px;
-  color: #5145cd;
-  background: #eae7ff;
-  border-radius: 20px;
+.reference-balance-name > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.balance-value {
-  margin: 14px 0;
-  font-size: 30px;
+.reference-balance-icon {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  place-items: center;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 7px;
   font-weight: 800;
-  color: #172344;
 }
 
-.balance-value span {
-  font-size: 12px;
-  font-weight: 500;
-  color: #7b86a0;
+.reference-balance-top strong {
+  color: #526075;
+  font-size: 8px;
+  white-space: nowrap;
 }
 
-.balance-track {
-  height: 7px;
-  background: #e9ecf5;
-  border-radius: 10px;
+.reference-balance-track {
+  height: 4px;
+  margin: 5px 0 0 30px;
   overflow: hidden;
+  border-radius: 20px;
+  background: #edf0f4;
 }
 
-.balance-track div {
-  height: 100%;
-  background: #6b60db;
-  border-radius: 10px;
-}
-
-.balance-caption {
-  margin-top: 9px;
-  font-size: 12px;
-  color: #8994a9;
-}
-
-.summary-panel h3 {
-  margin: 0;
-  color: #172344;
-  font-size: 17px;
-}
-
-.summary-subtitle {
-  margin: 6px 0 22px;
-  color: #8994a9;
-  font-size: 12px;
-}
-
-.summary-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 13px 0;
-  border-bottom: 1px solid #edf0f6;
-  font-size: 13px;
-}
-
-.summary-row span,
-.summary-total span {
-  color: #7b86a0;
-}
-
-.summary-row strong {
-  color: #253352;
-  text-align: right;
-}
-
-.summary-total {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-top: 18px;
-  padding: 16px;
-  border-radius: 10px;
-  background: #f3f2ff;
-  font-size: 13px;
-}
-
-.summary-total strong {
-  font-size: 23px;
-  color: #5145cd;
-}
-
-.summary-total strong.negative {
-  color: #dc2626;
-}
-
-.summary-footnote {
-  margin: 17px 0 0;
-  color: #8994a9;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.warn {
-  margin-top: 16px;
-  padding: 12px;
-  border-radius: 9px;
-  background: #fff7ed;
-  color: #92400e;
-  font-size: 13px;
-}
-
-.err {
-  margin-top: 12px;
-  color: #dc2626;
-  font-size: 13px;
-}
-
-.ok {
-  margin-top: 12px;
-  color: #16a34a;
-  font-size: 13px;
-}
-
-.empty {
-  color: #8994a9;
-  font-size: 13px;
-}
-
-/* Existing My Leaves and Leave Balance components */
-
-.my-leaves-toolbar {
-  margin-bottom: 14px;
-}
-
-.balance-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
-}
-
-.balance-card {
-  background: white;
-  border: 1px solid #eef0f6;
-  border-radius: 16px;
-  padding: 22px 24px;
-  box-shadow: 0 4px 14px rgba(16, 24, 40, .04);
-}
-
-.balance-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 14px;
-}
-
-.balance-type {
-  font-size: 16px;
-  font-weight: 600;
-  color: #111827;
-}
-
-.balance-available {
-  font-size: 22px;
-  font-weight: 600;
-  color: #5b21f3;
-}
-
-.balance-available small {
-  font-size: 13px;
-  font-weight: 400;
-  color: #667085;
-}
-
-.progress {
-  height: 8px;
-  background: #f0edff;
-  border-radius: 99px;
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-
-.progress > div {
-  height: 100%;
-  background: #5b21f3;
-  border-radius: 99px;
-}
-
-.balance-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: #667085;
-  padding: 6px 0;
-}
-
-.balance-row b {
-  color: #111827;
-}
-
-.empty-balance {
-  background: white;
-  border: 1px solid #eef0f6;
-  border-radius: 14px;
-  padding: 30px;
-  color: #667085;
-  font-size: 14px;
-}
-
-@media (max-width: 1050px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-
-  .right-column {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 700px) {
-  .leaves-page {
-    padding: 18px 16px 32px;
-  }
-
-  .form-panel,
-  .balance-panel,
-  .summary-panel {
-    padding: 20px;
-  }
-
-  .date-fields,
-  .right-column {
-    grid-template-columns: 1fr;
-  }
-
-  .leave-tabs {
-    width: 100%;
-  }
-
-  .leave-tabs button {
-    flex: 1;
-    padding: 10px 5px;
-    font-size: 12px;
-  }
-}
-
-/* =========================
-   Leaves UI refinement
-   ========================= */
-
-.leave-tabs {
-  box-shadow: 0 2px 8px rgba(25, 39, 67, .025);
-}
-
-.leave-tabs button {
-  transition:
-    background .16s ease,
-    color .16s ease,
-    box-shadow .16s ease;
-}
-
-.leave-tabs button.active {
-  box-shadow: 0 3px 8px rgba(79, 70, 229, .14);
-}
-
-.panel {
-  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
-  transition:
-    border-color .18s ease,
-    box-shadow .18s ease;
-}
-
-.form-panel {
-  border-color: #dfe5ef;
-}
-
-.form-panel:hover,
-.balance-panel:hover,
-.summary-panel:hover {
-  border-color: #d9e0eb;
-  box-shadow: 0 6px 18px rgba(25, 39, 67, .045);
-}
-
-.heading-icon {
-  width: 42px;
-  height: 42px;
-  flex-basis: 42px;
-  border-radius: 10px;
-}
-
-.field select,
-.field input,
-.field textarea {
-  transition:
-    border-color .16s ease,
-    box-shadow .16s ease,
-    background .16s ease;
-}
-
-.field select:hover:not(:disabled),
-.field input:hover:not(:disabled),
-.field textarea:hover:not(:disabled) {
-  border-color: #cbd5e1;
-}
-
-.field select:disabled,
-.field input:disabled,
-.field textarea:disabled {
-  background: #f8fafc;
-  cursor: not-allowed;
-}
-
-.form-footer button {
-  min-height: 42px;
-  transition:
-    background .16s ease,
-    transform .16s ease,
-    box-shadow .16s ease;
-}
-
-.form-footer button:hover:not(:disabled) {
-  box-shadow: 0 5px 14px rgba(79, 70, 229, .16);
-  transform: translateY(-1px);
-}
-
-.form-footer button:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.balance-item {
-  transition:
-    border-color .16s ease,
-    background .16s ease,
-    transform .16s ease;
-}
-
-.balance-item:hover {
-  border-color: #dce2ed;
-  background: #fbfcfe;
-  transform: translateY(-1px);
-}
-
-.balance-item.selected {
-  border-color: #d8d3ff;
-  background: #faf9ff;
-}
-
-.balance-track {
-  height: 7px;
-  background: #edf0f5;
-}
-
-.balance-track div {
-  transition: width .3s ease;
-}
-
-.summary-total {
-  border: 1px solid #e5e2ff;
-  background: #f7f6ff;
-}
-
-.enterprise-stat {
-  transition:
-    border-color .18s ease,
-    box-shadow .18s ease,
-    transform .18s ease;
-}
-
-.enterprise-stat:hover {
-  border-color: #d9e0eb;
-  box-shadow: 0 6px 18px rgba(25, 39, 67, .05);
-  transform: translateY(-1px);
-}
-
-.enterprise-register {
-  padding: 24px 26px;
-  border: 1px solid #e5eaf2;
-  border-radius: 13px;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
-}
-
-.enterprise-register .register-heading {
-  margin-bottom: 18px;
-}
-
-.enterprise-register .register-toolbar {
-  padding-bottom: 15px;
-  border-bottom: 1px solid #edf1f7;
-}
-
-.balance-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.balance-card {
-  padding: 21px;
-  border: 1px solid #e5eaf2;
-  border-radius: 13px;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
-  transition:
-    border-color .18s ease,
-    box-shadow .18s ease,
-    transform .18s ease;
-}
-
-.balance-card:hover {
-  border-color: #d9e0eb;
-  box-shadow: 0 6px 18px rgba(25, 39, 67, .05);
-  transform: translateY(-1px);
-}
-
-.balance-top {
-  align-items: center;
-}
-
-.balance-type {
-  color: #344054;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.balance-available {
-  color: #26334b;
-  font-size: 22px;
-  font-weight: 750;
-}
-
-.balance-available small {
-  color: #8b97a9;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.progress {
-  height: 7px;
-  margin: 17px 0;
-  border-radius: 999px;
-  background: #edf0f5;
-  overflow: hidden;
-}
-
-.progress div {
+.reference-balance-track span {
+  display: block;
   height: 100%;
   border-radius: inherit;
-  background: #4f46e5;
-  transition: width .3s ease;
+  background: #2874e8;
 }
 
-.balance-row {
-  color: #7b86a0;
-  font-size: 12px;
-}
+/* policy */
 
-.balance-row b {
-  color: #344054;
-  font-weight: 700;
-}
-
-.empty-balance {
-  padding: 48px 24px;
-  border: 1px solid #e5eaf2;
-  border-radius: 13px;
-  background: #fff;
-  color: #8b97a9;
-  font-size: 13px;
-  text-align: center;
-}
-
-@media (max-width: 900px) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .balance-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 700px) {
-  .leave-tabs {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .leave-tabs button {
-    flex: 1 0 auto;
-    padding: 9px 13px;
-  }
-
-  .form-panel,
-  .balance-panel,
-  .summary-panel {
-    padding: 20px;
-  }
-
-  .date-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .balance-grid {
-    gap: 10px;
-  }
-
-  .balance-card {
-    padding: 18px;
-  }
-
-  .enterprise-register {
-    padding: 19px;
-  }
-}
-
-
-.leave-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
+.reference-side-title {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(15, 23, 42, .48);
+  gap: 8px;
+  margin-bottom: 11px;
 }
 
-.leave-dialog {
-  width: min(460px, 100%);
-  padding: 24px;
-  border: 1px solid #e5eaf2;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
-}
-
-.leave-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.leave-dialog-icon {
+.reference-info-icon,
+.reference-calendar-icon {
   display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: #f3f0ff;
-  color: #5145cd;
-  font-size: 19px;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: #2874e8;
+  font-size: 9px;
+  font-weight: 800;
 }
 
-.leave-dialog-close {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #667085;
-  font-size: 22px;
-  cursor: pointer;
-}
-
-.leave-dialog h2 {
-  margin: 20px 0 8px;
-  color: #172344;
-  font-size: 21px;
-}
-
-.leave-dialog-description {
-  margin: 0;
-  color: #667085;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.leave-dialog-details {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 18px;
-  padding: 14px;
-  border: 1px solid #eef1f6;
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.leave-dialog-details strong {
-  color: #172344;
-  font-size: 13px;
-}
-
-.leave-dialog-details span {
-  color: #667085;
-  font-size: 12px;
-}
-
-.leave-dialog-field {
+.reference-policy-list {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  margin-top: 18px;
+  margin: 0;
+  padding: 0 0 0 13px;
+  color: #667085;
 }
 
-.leave-dialog-field span {
-  color: #344054;
-  font-size: 12px;
-  font-weight: 700;
+.reference-policy-list li {
+  padding-left: 1px;
+  font-size: 8px;
+  line-height: 1.45;
 }
 
-.leave-dialog-field textarea {
-  width: 100%;
-  resize: vertical;
-  padding: 11px 12px;
-  box-sizing: border-box;
+/* calendar */
+
+.reference-calendar-card {
+  padding-bottom: 13px;
 }
 
-.leave-dialog-field small {
-  color: #98a2b3;
-  font-size: 11px;
+.reference-calendar-header {
+  display: grid;
+  grid-template-columns: 25px 1fr 25px;
+  align-items: center;
+  margin: 2px 0 11px;
 }
 
-.leave-dialog-error {
-  margin: 14px 0 0;
-  color: #b42318;
-  font-size: 12px;
-}
-
-.leave-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.leave-dialog-secondary,
-.leave-dialog-primary {
-  padding: 10px 15px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
+.reference-calendar-header button {
+  width: 25px;
+  height: 25px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #697586;
+  font-size: 16px;
   cursor: pointer;
 }
 
-.leave-dialog-secondary {
-  border: 1px solid #dbe2ee;
-  background: #fff;
-  color: #52617e;
+.reference-calendar-header button:hover {
+  background: #f2f5f9;
 }
 
-.leave-dialog-primary {
-  border: 0;
-  background: #5145cd;
+.reference-calendar-header strong {
+  text-align: center;
+  color: #3b465a;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.reference-calendar-weekdays,
+.reference-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.reference-calendar-weekdays {
+  margin-bottom: 5px;
+}
+
+.reference-calendar-weekdays span {
+  color: #98a2b3;
+  font-size: 7px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.reference-calendar-grid {
+  row-gap: 3px;
+}
+
+.reference-calendar-day {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  margin: auto;
+  place-items: center;
+  border-radius: 6px;
+  color: #536074;
+  font-size: 8px;
+}
+
+.reference-calendar-day.outside {
+  color: #d1d6df;
+}
+
+.reference-calendar-day.today {
+  border: 1px solid #2874e8;
+  color: #2874e8;
+  font-weight: 750;
+}
+
+.reference-calendar-day.selected {
+  background: #2874e8;
   color: #fff;
+  font-weight: 750;
 }
 
-.leave-dialog-secondary:disabled,
-.leave-dialog-primary:disabled {
-  opacity: .6;
-  cursor: not-allowed;
+.reference-calendar-legend {
+  display: flex;
+  gap: 13px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #edf0f4;
+  color: #8a96a8;
+  font-size: 7px;
+}
+
+.reference-calendar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.reference-calendar-legend i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.legend-leave {
+  background: #2874e8;
+}
+
+.legend-weekend {
+  background: #e9edf3;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 1100px) {
+  .reference-leave-layout {
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+  }
+}
+
+@media (max-width: 850px) {
+  .reference-leave-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reference-sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reference-calendar-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .reference-field-grid,
+  .reference-duration-row,
+  .reference-sidebar {
+    grid-template-columns: 1fr;
+  }
 }
 
 </style>
 <style scoped>
-/* Final layout overrides */
-@media (min-width: 1051px) {
-  .leaves-page .layout {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) !important;
-    gap: 24px !important;
-    justify-content: stretch !important;
-    align-items: start;
-  }
+/* ============================================================
+   FINAL REFERENCE ALIGNMENT
+   ============================================================ */
 
-  .leaves-page .layout > .form-panel {
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0;
-    margin: 0 !important;
-    justify-self: stretch;
-  }
+/* Use the entire available content width */
+</style>
 
-  .leaves-page .layout > .right-column {
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0;
-    margin: 0 !important;
-    justify-self: stretch;
-  }
+<style scoped>
+/* Keep Leave Balance compact and scroll its contents */
+.reference-sidebar > .reference-side-card:first-child {
+  max-height: 360px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
-/* Enterprise Leaves — refined page layout */
-
-.leaves-page {
-  padding: 32px clamp(20px, 3vw, 48px) 56px;
+/* Keep the header visible while scrolling */
+.reference-sidebar > .reference-side-card:first-child .reference-side-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #ffffff;
+  padding-bottom: 12px;
 }
 
-.enterprise-page-header {
+/* Compact scrollbar */
+.reference-sidebar > .reference-side-card:first-child::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reference-sidebar > .reference-side-card:first-child::-webkit-scrollbar-track {
+  background: #f1f3f7;
+  border-radius: 10px;
+}
+
+.reference-sidebar > .reference-side-card:first-child::-webkit-scrollbar-thumb {
+  background: #c4cad6;
+  border-radius: 10px;
+}
+
+.reference-sidebar > .reference-side-card:first-child::-webkit-scrollbar-thumb:hover {
+  background: #9da6b5;
+}
+</style>
+
+<style scoped>
+/* Leave Balance card stays fixed */
+.reference-sidebar > .reference-side-card:first-child {
+  max-height: none !important;
+  height: 360px !important;
+  overflow: hidden !important;
+}
+
+/* Only the leave balance list scrolls */
+.reference-sidebar > .reference-side-card:first-child .reference-balance-list {
+  max-height: 285px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding-right: 8px;
+}
+
+/* Keep the card header completely outside the scroll area */
+.reference-sidebar > .reference-side-card:first-child .reference-side-header {
+  position: static !important;
+  background: transparent !important;
+  padding-bottom: 12px;
+}
+
+/* Leave-balance scrollbar */
+.reference-sidebar > .reference-side-card:first-child .reference-balance-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reference-sidebar > .reference-side-card:first-child .reference-balance-list::-webkit-scrollbar-track {
+  background: #f1f3f7;
+  border-radius: 10px;
+}
+
+.reference-sidebar > .reference-side-card:first-child .reference-balance-list::-webkit-scrollbar-thumb {
+  background: #c4cad6;
+  border-radius: 10px;
+}
+
+.reference-sidebar > .reference-side-card:first-child .reference-balance-list::-webkit-scrollbar-thumb:hover {
+  background: #9da6b5;
+}
+</style>
+
+
+
+<style scoped>
+/* Date Preview - enlarged but readable */
+.reference-calendar-card {
+  min-height: 420px;
+}
+
+.reference-calendar-card .reference-calendar-header {
+  margin-bottom: 16px;
+}
+
+.reference-calendar-card .reference-calendar-header strong {
+  font-size: 13px;
+}
+
+.reference-calendar-card .reference-calendar-header button {
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+}
+
+.reference-calendar-card .reference-calendar-weekdays {
+  margin-bottom: 12px;
+}
+
+.reference-calendar-card .reference-calendar-weekdays span {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.reference-calendar-card .reference-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 14px;
+  min-height: 0;
+}
+
+.reference-calendar-card .reference-calendar-day {
+  min-height: 24px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reference-calendar-card .reference-calendar-legend {
+  margin-top: 22px;
+}
+
+.reference-calendar-card .reference-calendar-legend span {
+  font-size: 10px;
+}
+</style>
+
+
+<style scoped>
+/* Leave Balance - reference layout */
+.reference-balance-item {
+  position: relative !important;
+  padding-bottom: 7px !important;
+}
+
+.reference-balance-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+}
+
+.reference-balance-name {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.reference-balance-top strong {
+  flex: 0 0 auto !important;
+  margin-left: 12px !important;
+  text-align: right !important;
+  font-size: 8px !important;
+  white-space: nowrap !important;
+}
+
+.reference-balance-track {
+  width: 42% !important;
+  height: 4px !important;
+  margin: 5px 0 0 auto !important;
+  overflow: hidden !important;
+  border-radius: 20px !important;
+  background: #e9edf2 !important;
+}
+
+.reference-balance-track span {
+  display: block !important;
+  height: 100% !important;
+  border-radius: inherit !important;
+  background: #2874e8 !important;
+}
+</style>
+
+<style scoped>
+/* Match Leave Balance progress bars to their icons */
+.reference-balance-track.birthday span {
+  background: #ef5b68 !important;
+}
+
+.reference-balance-track.personal span {
+  background: #8056d8 !important;
+}
+
+.reference-balance-track.maternity span {
+  background: #ef5b68 !important;
+}
+
+.reference-balance-track.paternity span {
+  background: #4b8de8 !important;
+}
+
+.reference-balance-track.intern span {
+  background: #7a59d6 !important;
+}
+
+.reference-balance-track.carry span {
+  background: #8158d7 !important;
+}
+
+.reference-balance-track.comp span {
+  background: #e9a12d !important;
+}
+
+.reference-balance-track.optional span {
+  background: #4f9bdc !important;
+}
+
+.reference-balance-track.adjustment span {
+  background: #35a56f !important;
+}
+
+.reference-balance-track.fte span {
+  background: #4f8ee7 !important;
+}
+
+.reference-balance-track.casual span {
+  background: #39a875 !important;
+}
+
+.reference-balance-track.sick span {
+  background: #e45b62 !important;
+}
+
+.reference-balance-track.default span {
+  background: #4d83dd !important;
+}
+
+/* =========================================================
+   MY LEAVES — HISTORY STRUCTURE
+   ========================================================= */
+
+.leave-history-card {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 18px;
+  padding: 22px 24px 24px;
+  border: 1px solid #e5eaf2;
+  border-radius: 13px;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
+}
+
+.leave-history-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 26px;
 }
 
-.page-eyebrow {
-  display: block;
-  margin-bottom: 9px;
-  color: #7b88a0;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 1.4px;
-}
-
-.enterprise-page-header h1 {
+.leave-history-header h2 {
   margin: 0;
-  color: #202d46;
-  font-size: 29px;
-  font-weight: 750;
-  letter-spacing: -1px;
-}
-
-.enterprise-page-header p {
-  margin: 9px 0 0;
-  color: #7c899e;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-
-.page-heading-action {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.page-heading-copy {
-  min-width: 0;
-}
-
-.leave-action-back {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  margin-top: 2px;
-  padding: 0;
-  border: 1px solid #d9dee8;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #202d46;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.leave-action-back:hover {
-  background: #f8fafc;
-  border-color: #cbd3df;
-}
-
-.primary-page-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 42px;
-  padding: 11px 17px;
-  border: 0;
-  border-radius: 9px;
-  background: #4f46e5;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.primary-page-action:hover {
-  background: #4338ca;
-}
-
-.primary-page-action span {
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 12px;
-}
-
-.enterprise-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 15px;
-  margin: 24px 0;
-}
-
-.enterprise-stat {
-  min-width: 0;
-  padding: 20px 22px;
-  border: 1px solid #e5eaf2;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgba(23, 35, 59, .025);
-}
-
-.stat-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #728097;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.stat-icon {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 9px;
+  color: #26334b;
   font-size: 17px;
-  font-weight: 700;
-}
-
-.total-icon {
-  background: #edf2ff;
-  color: #5369b9;
-}
-
-.approved-icon {
-  background: #e9f8ef;
-  color: #198754;
-}
-
-.pending-icon {
-  background: #fff4e5;
-  color: #b7791f;
-}
-
-.rejected-icon {
-  background: #fff0f1;
-  color: #cf4959;
-}
-
-.enterprise-stat > strong {
-  display: block;
-  margin-top: 10px;
-  color: #202d46;
-  font-size: 29px;
+  line-height: 1.25;
   font-weight: 750;
-  letter-spacing: -.8px;
 }
 
-.enterprise-stat > small {
+.leave-history-header span {
   display: block;
   margin-top: 5px;
-  color: #98a3b5;
+  color: #8994a6;
   font-size: 11px;
 }
 
-.enterprise-register {
-  margin-top: 27px;
-}
-
-.register-heading {
+.leave-history-search {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 19px;
-}
-
-.register-heading h2 {
-  margin: 0;
-  color: #26334b;
-  font-size: 18px;
-  font-weight: 750;
-}
-
-.register-heading p {
-  margin: 6px 0 0;
-  color: #8b97a9;
-  font-size: 12px;
-}
-
-.record-count {
-  color: #8793a7;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.register-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 15px;
-  margin-bottom: 17px;
-}
-
-.status-filter {
-  min-width: 0;
-}
-
-.enterprise-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 275px;
-  max-width: 100%;
-  min-height: 40px;
-  padding: 0 13px;
+  gap: 9px;
+  width: 270px;
+  height: 38px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 0 12px;
   border: 1px solid #dfe5ef;
-  border-radius: 9px;
-  background: #fff;
+  border-radius: 8px;
+  background: #ffffff;
   color: #98a3b5;
 }
 
-.enterprise-search:focus-within {
+.leave-history-search:focus-within {
   border-color: #818cf8;
   box-shadow: 0 0 0 3px #eef2ff;
 }
 
-.enterprise-search svg {
-  width: 16px;
-  height: 16px;
+.leave-history-search svg {
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
 }
 
-.enterprise-search input {
+.leave-history-search input {
   width: 100%;
   min-width: 0;
-  padding: 10px 0;
+  padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
   color: #26334b;
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.enterprise-search input:focus {
-  border: 0;
-  outline: 0;
-  box-shadow: none;
+.leave-history-search input::placeholder {
+  color: #a0a9b8;
 }
 
-.enterprise-alert,
-.enterprise-success {
-  margin: 16px 0;
-  padding: 13px 16px;
+.leave-history-divider {
+  height: 1px;
+  margin: 18px 0;
+  background: #edf1f6;
+}
+
+.leave-history-card .leave-register {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.leave-history-card .empty-state {
+  min-height: 180px;
+  box-sizing: border-box;
+  padding: 38px 20px;
+  border: 1px dashed #dfe5ee;
   border-radius: 9px;
-  font-size: 12px;
-}
-
-.enterprise-alert {
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.enterprise-success {
-  border: 1px solid #bbf7d0;
-  background: #f0fdf4;
-  color: #166534;
-}
-
-@media (max-width: 1100px) {
-  .enterprise-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  background: #fbfcfe;
 }
 
 @media (max-width: 700px) {
-  .leaves-page {
-    padding: 22px 16px 36px;
+  .leave-history-card {
+    padding: 18px;
   }
 
-  .enterprise-page-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .enterprise-page-header h1 {
-    font-size: 25px;
-  }
-
-  .enterprise-stats {
-    gap: 10px;
-  }
-
-  .enterprise-stat {
-    padding: 15px;
-  }
-
-  .register-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .register-toolbar {
+  .leave-history-header {
     align-items: stretch;
     flex-direction: column;
+    gap: 14px;
   }
 
-  .enterprise-search {
+  .leave-history-search {
     width: 100%;
   }
 }
 
-@media (max-width: 390px) {
-  .enterprise-stats {
-    grid-template-columns: 1fr;
-  }
+
+/* =========================================================
+   LEAVE SUBMISSION SUCCESS MESSAGE
+   ========================================================= */
+
+.leaves-page .apply-form-body > .ok {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin: 18px 0 0 !important;
+  padding: 13px 15px !important;
+  border: 1px solid #a7dfc1 !important;
+  border-radius: 9px !important;
+  background: #ecfaf2 !important;
+  color: #15803d !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+  box-shadow: 0 2px 8px rgba(22, 135, 91, .08) !important;
 }
 
+.leaves-page .apply-form-body > .ok::before {
+  content: "✓" !important;
+  display: grid !important;
+  width: 22px !important;
+  height: 22px !important;
+  flex-shrink: 0 !important;
+  place-items: center !important;
+  border-radius: 50% !important;
+  background: #d5f3e2 !important;
+  color: #16875b !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+}
 
-/* Final Leaves polish */
+</style>
+
+
+/* =========================================================
+   FINAL LEAVE HISTORY STRUCTURE
+   ========================================================= */
 
 .enterprise-register {
-  overflow: hidden;
-  padding: 24px;
-  border: 1px solid #e5eaf2;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 2px 12px rgba(23,35,59,.035);
-}
-
-.enterprise-register .leave-register {
-  box-shadow: none;
+  padding: 22px 24px 24px !important;
+  border: 1px solid #e5eaf2 !important;
+  border-radius: 14px !important;
+  background: #fff !important;
+  box-shadow: 0 2px 10px rgba(25, 39, 67, .025) !important;
 }
 
 .enterprise-register .register-heading {
-  margin-bottom: 23px;
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 20px !important;
+  margin-bottom: 16px !important;
+}
+
+.enterprise-register .register-heading h2 {
+  margin: 0 !important;
+  color: #26334b !important;
+  font-size: 18px !important;
+  line-height: 1.25 !important;
+  font-weight: 750 !important;
+}
+
+.enterprise-register .register-heading p {
+  margin: 5px 0 0 !important;
+  color: #8b97a9 !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.enterprise-register .record-count {
+  display: inline-flex !important;
+  align-items: center !important;
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  border: 1px solid #e4e9f1 !important;
+  border-radius: 7px !important;
+  background: #f7f9fc !important;
+  color: #66758c !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
 }
 
 .enterprise-register .register-toolbar {
-  margin-bottom: 20px;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 0 17px !important;
+  border-bottom: 1px solid #edf1f6 !important;
 }
 
-.enterprise-stats {
-  gap: 13px;
+.enterprise-register .enterprise-search {
+  width: 360px !important;
+  max-width: 100% !important;
+  min-height: 40px !important;
+  box-sizing: border-box !important;
 }
 
-.enterprise-stat {
-  padding: 18px 20px;
+.enterprise-register :deep(.leave-register) {
+  margin-top: 17px !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
-.enterprise-stat > strong {
-  font-size: 27px;
+.enterprise-register :deep(.empty-state) {
+  min-height: 185px !important;
+  margin: 0 !important;
+  padding: 38px 20px !important;
+  box-sizing: border-box !important;
+  border: 1px dashed #dfe5ee !important;
+  border-radius: 10px !important;
+  background: #fbfcfe !important;
 }
 
-.leave-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: rgba(15,23,42,.58);
-  backdrop-filter: blur(3px);
+.enterprise-register :deep(.empty-icon) {
+  width: 44px !important;
+  height: 44px !important;
+  margin-bottom: 12px !important;
+  border-radius: 11px !important;
+  background: #eef2ff !important;
+  color: #4f46e5 !important;
+  font-size: 21px !important;
 }
 
-.leave-dialog {
-  width: min(100%, 460px);
-  padding: 27px;
-  border: 1px solid #e5eaf2;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 24px 70px rgba(15,23,42,.22);
+.enterprise-register :deep(.empty-state h3) {
+  margin: 0 0 6px !important;
+  color: #26334b !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
 }
 
-.leave-dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 17px;
-}
-
-.leave-dialog-icon {
-  display: grid;
-  width: 43px;
-  height: 43px;
-  place-items: center;
-  border-radius: 12px;
-  background: #eef2ff;
-  color: #4f46e5;
-  font-size: 23px;
-}
-
-.leave-dialog-close {
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  background: transparent;
-  color: #8b97a9;
-  font-size: 24px;
-}
-
-.leave-dialog-close:hover {
-  background: #f1f5f9;
-}
-
-.leave-dialog h2 {
-  margin: 0;
-  color: #202d46;
-  font-size: 21px;
-  font-weight: 750;
-}
-
-.leave-dialog-description {
-  margin: 9px 0 20px;
-  color: #718096;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.leave-dialog-details {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid #e5eaf2;
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.leave-dialog-details strong {
-  color: #26334b;
-  font-size: 13px;
-}
-
-.leave-dialog-details span {
-  color: #718096;
-  font-size: 12px;
-}
-
-.leave-dialog-field {
-  display: grid;
-  gap: 9px;
-  margin-top: 20px;
-  color: #344054;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.leave-dialog-field textarea {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #dce3ed;
-  border-radius: 9px;
-  resize: vertical;
-  font-size: 13px;
-  font-weight: 400;
-}
-
-.leave-dialog-field small {
-  color: #98a3b5;
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.leave-dialog-error {
-  margin-top: 15px;
-  color: #b91c1c;
-  font-size: 12px;
-}
-
-.leave-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 26px;
-}
-
-.leave-dialog-secondary,
-.leave-dialog-primary {
-  min-height: 39px;
-  padding: 10px 15px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.leave-dialog-secondary {
-  border: 1px solid #dce3ed;
-  background: #fff;
-  color: #475569;
-}
-
-.leave-dialog-secondary:hover {
-  background: #f8fafc;
-}
-
-.leave-dialog-primary {
-  background: #4f46e5;
-  color: #fff;
-}
-
-.leave-dialog-primary:hover {
-  background: #4338ca;
+.enterprise-register :deep(.empty-state p) {
+  max-width: 360px !important;
+  margin: 0 auto !important;
+  color: #8b97a9 !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
 }
 
 @media (max-width: 700px) {
   .enterprise-register {
-    padding: 17px;
+    padding: 18px !important;
   }
 
-  .leave-dialog {
-    padding: 22px;
+  .enterprise-register .register-heading {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .enterprise-register .enterprise-search {
+    width: 100% !important;
   }
 }
 
-.leave-balance-hint {
-  margin: 7px 2px 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: #7b86a0;
+
+<style>
+/* Leave application success notification */
+.leaves-page .leave-submit-success {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 18px 0 0 !important;
+  padding: 13px 15px !important;
+  border: 1px solid #a7dfc1 !important;
+  border-radius: 9px !important;
+  background: #ecfaf2 !important;
+  color: #15803d !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+  box-shadow: 0 2px 8px rgba(22, 135, 91, .08) !important;
 }
 
-.secondary-page-action {
-  border: 1px solid #dc2626;
-  background: #fff;
-  color: #b91c1c;
-  border-radius: 10px;
-  padding: 10px 16px;
+.leaves-page .leave-submit-success::before {
+  content: "✓";
+  display: grid;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  place-items: center;
+  border-radius: 50%;
+  background: #d5f3e2;
+  color: #16875b;
   font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  font-weight: 800;
 }
 
-.secondary-page-action:hover {
-  background: #fef2f2;
-  border-color: #b91c1c;
+/* Leave application validation/error message */
+.leaves-page .form-section.last .message.error {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 18px 0 0 !important;
+  padding: 12px 14px !important;
+  border: 1px solid #f3b4b4 !important;
+  border-radius: 8px !important;
+  background: #fff1f1 !important;
+  color: #dc2626 !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  line-height: 1.45 !important;
 }
 
+.leaves-page .form-section.last .message.error::before {
+  content: "!";
+  display: grid;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  place-items: center;
+  margin-right: 9px;
+  border-radius: 50%;
+  background: #fee2e2;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+
+/* LEAVE ERROR OVERRIDE START */
+
+.leaves-page .err {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 16px 0 0 !important;
+  padding: 12px 14px !important;
+  border: 1px solid #f3b4b4 !important;
+  border-radius: 8px !important;
+  background: #fff1f1 !important;
+  color: #dc2626 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.45 !important;
+}
+/* LEAVE ERROR OVERRIDE END */
+
+
+/* Exact validation error shown below the attachment section */
+.leaves-page .leave-validation-error {
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 16px 0 0 !important;
+  padding: 12px 14px !important;
+  border: 1px solid #f3b4b4 !important;
+  border-radius: 8px !important;
+  background: #fff1f1 !important;
+  color: #dc2626 !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  line-height: 1.5 !important;
+}
+
+
+/* =========================================================
+   ACTION CENTER — ENTERPRISE EMPTY STATE
+   ========================================================= */
+
+.leave-actions-page {
+  width: 100%;
+  box-sizing: border-box;
+}
 
 .leave-actions-card {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #e4e9f1;
+  border-radius: 14px;
   background: #ffffff;
-  border: 1px solid #e7eaf0;
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 3px 14px rgba(25, 39, 67, 0.035);
+  overflow: hidden;
 }
 
 .leave-actions-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 22px;
+  gap: 24px;
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.leave-actions-heading > div {
+  min-width: 0;
+}
+
+.leave-actions-heading .page-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #6978a0;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.09em;
 }
 
 .leave-actions-heading h2 {
-  margin: 4px 0 6px;
-  color: #202d46;
-  font-size: 20px;
+  margin: 0;
+  color: #26334b;
+  font-size: 19px;
+  line-height: 1.3;
   font-weight: 750;
 }
 
 .leave-actions-heading p {
-  margin: 0;
-  color: #7c899e;
-  font-size: 13px;
-  line-height: 1.6;
+  max-width: 600px;
+  margin: 7px 0 0;
+  color: #8994a6;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .leave-actions-count {
   flex-shrink: 0;
+  min-width: 58px;
   padding: 7px 11px;
-  border-radius: 999px;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 12px;
+  border: 1px solid #e2e7f0;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: #52627d;
+  font-size: 11px;
   font-weight: 700;
-}
-
-.leave-actions-empty {
-  padding: 48px 24px;
   text-align: center;
-  border: 1px dashed #d9dee8;
-  border-radius: 12px;
-  color: #667085;
 }
-
-.leave-actions-empty strong {
-  display: block;
-  margin-bottom: 6px;
-  color: #344054;
-}
-
-.leave-actions-empty p {
-  margin: 0;
-  font-size: 13px;
-}
-
 
 .leave-action-search {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  margin-bottom: 20px;
-  padding: 14px;
-  background: #f8fafc;
-  border: 1px solid #e7eaf0;
-  border-radius: 12px;
+  padding: 18px 26px;
+  border-bottom: 1px solid #edf1f6;
+  background: #fbfcfe;
 }
 
 .leave-action-search label {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: 245px;
 }
 
 .leave-action-search label span {
-  color: #667085;
-  font-size: 11px;
+  color: #59677e;
+  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .4px;
 }
 
 .leave-action-search input {
+  width: 100%;
   height: 38px;
-  min-width: 170px;
+  box-sizing: border-box;
   padding: 0 11px;
-  border: 1px solid #d9dee8;
-  border-radius: 8px;
-  background: #fff;
-  color: #344054;
-  font-size: 13px;
+  border: 1px solid #dce2eb;
+  border-radius: 7px;
+  outline: none;
+  background: #ffffff;
+  color: #34425b;
+  font-size: 11px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.leave-action-search input:focus {
+  border-color: #8fa4d8;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, .07);
 }
 
 .leave-action-search-btn,
 .leave-action-clear-btn {
   height: 38px;
   padding: 0 15px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: 7px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
+  transition: all .15s ease;
 }
 
 .leave-action-search-btn {
-  border: 1px solid #202d46;
-  background: #202d46;
-  color: #fff;
+  border: 1px solid #315fd3;
+  background: #315fd3;
+  color: #ffffff;
+}
+
+.leave-action-search-btn:hover {
+  background: #2854c2;
 }
 
 .leave-action-clear-btn {
-  border: 1px solid #d9dee8;
-  background: #fff;
-  color: #667085;
+  border: 1px solid #dce2eb;
+  background: #ffffff;
+  color: #59677e;
 }
 
-</style>
+.leave-action-clear-btn:hover {
+  border-color: #c8d0dc;
+  background: #f7f9fc;
+}
 
-
-<style scoped>
-/* ============================================================
-   FINAL EMPLOYEE LEAVE PAGE POLISH
-   ============================================================ */
-
-.leaves-page {
-  width: 100%;
-  min-width: 0;
-  padding: 28px 32px 48px;
+.leave-actions-empty {
+  min-height: 310px;
   box-sizing: border-box;
-  color: #192842;
-}
-
-.leaves-page .enterprise-page-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 22px;
-}
-
-.leaves-page .enterprise-page-header h1 {
-  margin: 0;
-  color: #192842;
-  font-size: 29px;
-  line-height: 1.15;
-  font-weight: 750;
-  letter-spacing: -1px;
-}
-
-.leaves-page .enterprise-page-header p {
-  margin: 8px 0 0;
-  color: #7c899e;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-/* Dashboard-style purple action */
-
-.leaves-page .secondary-page-action {
-  display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding: 0 15px;
-  border: 1px solid #d9d6ff;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #4f46e5;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.leaves-page .secondary-page-action:hover {
-  background: #f7f5ff;
-  border-color: #bdb7ff;
-}
-
-/* Dashboard-like tabs */
-
-.leaves-page .leave-tabs {
-  display: inline-flex;
-  width: fit-content;
-  gap: 3px;
-  margin-bottom: 18px;
-  padding: 4px;
-  border: 1px solid #e3e7ef;
-  border-radius: 11px;
-  background: #ffffff;
-  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
-}
-
-.leaves-page .leave-tabs button {
-  min-height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #66748c;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.leaves-page .leave-tabs button.active {
-  background: #4f46e5;
-  color: #ffffff;
-  box-shadow: 0 3px 8px rgba(79, 70, 229, .18);
-}
-
-/* Main two-column workspace */
-
-.leaves-page .layout {
-  display: grid !important;
-  grid-template-columns:
-    minmax(0, 1.45fr)
-    minmax(320px, .85fr) !important;
-  gap: 18px !important;
-  align-items: start;
-  width: 100%;
-}
-
-/* Form card */
-
-.leaves-page .layout > .form-panel {
-  width: 100% !important;
-  max-width: none !important;
-  min-width: 0;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 1px solid #e5eaf2;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 2px 12px rgba(25, 39, 67, .035);
-}
-
-.leaves-page .form-panel .section-heading {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 20px 24px;
-  margin: 0;
-  border-bottom: 1px solid #edf0f5;
-}
-
-.leaves-page .form-panel .heading-icon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 10px;
-  background: #eeeaff;
-  color: #5b4fe1;
-  font-size: 17px;
-}
-
-.leaves-page .form-panel h2 {
-  margin: 0;
-  color: #202d46;
-  font-size: 18px;
-  line-height: 1.25;
-  font-weight: 750;
-}
-
-.leaves-page .form-panel .subtitle {
-  margin: 4px 0 0;
-  color: #7c899e;
-  font-size: 12px;
-}
-
-.leaves-page .form-panel .form-fields {
-  display: grid;
-  gap: 18px;
-  margin: 0;
-  padding: 22px 24px 4px;
-}
-
-.leaves-page .form-panel .field label {
-  display: block;
-  margin-bottom: 7px;
-  color: #46546c;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.leaves-page .form-panel .field input,
-.leaves-page .form-panel .field select,
-.leaves-page .form-panel .field textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #dfe5ef;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #25334d;
-  font-size: 12px;
-}
-
-.leaves-page .form-panel .field input,
-.leaves-page .form-panel .field select {
-  height: 44px;
-  padding: 0 12px;
-}
-
-.leaves-page .form-panel .field textarea {
-  min-height: 110px;
-  padding: 12px;
-  resize: vertical;
-  line-height: 1.55;
-}
-
-.leaves-page .form-panel .field input:focus,
-.leaves-page .form-panel .field select:focus,
-.leaves-page .form-panel .field textarea:focus {
-  outline: none;
-  border-color: #8f87ef;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, .08);
-}
-
-.leaves-page .form-panel .date-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.leaves-page .form-panel .leave-balance-hint {
-  margin: 6px 0 0;
-  color: #7c899e;
-  font-size: 10px;
-}
-
-.leaves-page .form-panel .form-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-top: 22px;
-  padding: 18px 24px 21px;
-  border-top: 1px solid #edf0f5;
-  background: #fbfcfe;
-}
-
-.leaves-page .form-panel .footer-note {
-  max-width: 430px;
-  margin: 0;
-  color: #7c899e;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.leaves-page .form-panel .form-footer button {
-  min-height: 40px;
-  padding: 0 17px;
-  border: 0;
-  border-radius: 9px;
-  background: #4f46e5;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: 0 3px 9px rgba(79, 70, 229, .16);
-}
-
-.leaves-page .form-panel .form-footer button:hover:not(:disabled) {
-  background: #4338ca;
-}
-
-/* Right column */
-
-.leaves-page .layout > .right-column {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 18px;
-  width: 100% !important;
-  max-width: none !important;
-  min-width: 0;
-  margin: 0 !important;
-}
-
-/* Right-side cards */
-
-.leaves-page .balance-panel,
-.leaves-page .leave-help-panel {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 20px;
-  border: 1px solid #e5eaf2;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 2px 12px rgba(25, 39, 67, .035);
-}
-
-.leaves-page .side-eyebrow {
-  display: block;
-  margin-bottom: 12px;
-  color: #5e6e8d;
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 1.15px;
-}
-
-/* Balance */
-
-.leaves-page .balance-item {
-  margin-top: 10px;
-  padding: 14px;
-  border: 1px solid #edf0f6;
-  border-radius: 12px;
-  background: #fafbfe;
-}
-
-.leaves-page .balance-item.selected {
-  border-color: #d9d6ff;
-  background: #f8f7ff;
-}
-
-.leaves-page .balance-item-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.leaves-page .balance-item-name {
-  color: #283650;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.leaves-page .selected-tag {
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: #eeeaff;
-  color: #5546df;
-  font-size: 9px;
-  font-weight: 750;
-}
-
-.leaves-page .balance-value {
-  margin-top: 11px;
-  color: #1f2c45;
-  font-size: 24px;
-  font-weight: 750;
-  letter-spacing: -.5px;
-}
-
-.leaves-page .balance-value span {
-  margin-left: 5px;
-  color: #7c899e;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.leaves-page .balance-track {
-  height: 7px;
-  margin-top: 11px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #eceef5;
-}
-
-.leaves-page .balance-track > div {
-  height: 100%;
-  border-radius: inherit;
-  background: #5b4fe1;
-}
-
-.leaves-page .balance-caption {
-  margin-top: 8px;
-  color: #7c899e;
-  font-size: 10px;
-}
-
-.leaves-page .side-empty {
-  padding: 18px;
-  border: 1px dashed #dfe4ee;
-  border-radius: 10px;
-  color: #7c899e;
-  font-size: 11px;
+  padding: 50px 24px;
   text-align: center;
+  background: #ffffff;
 }
 
-/* Help panel */
-
-.leaves-page .leave-help-panel h3 {
-  margin: 0;
-  color: #202d46;
-  font-size: 16px;
-  font-weight: 750;
-}
-
-.leaves-page .leave-help-intro {
-  margin: 6px 0 16px;
-  color: #7c899e;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.leaves-page .leave-help-list {
-  display: grid;
-  gap: 13px;
-}
-
-.leaves-page .leave-help-item {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-}
-
-.leaves-page .leave-help-item > span {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 9px;
-  background: #eeeaff;
-  color: #5546df;
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.leaves-page .leave-help-item strong {
-  display: block;
-  color: #344054;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.leaves-page .leave-help-item p {
-  margin: 3px 0 0;
-  color: #8490a4;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-/* Responsive */
-
-@media (max-width: 900px) {
-  .leaves-page .layout {
-    grid-template-columns: 1fr !important;
-  }
-
-  .leaves-page .layout > .right-column {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 650px) {
-  .leaves-page {
-    padding: 22px 16px 36px;
-  }
-
-  .leaves-page .enterprise-page-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .leaves-page .secondary-page-action {
-    width: 100%;
-  }
-
-  .leaves-page .form-panel .date-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .form-panel .form-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .leaves-page .form-panel .form-footer button {
-    width: 100%;
-  }
-
-  .leaves-page .layout > .right-column {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
-
-
-<style scoped>
-/* ============================================================
-   APPLY LEAVE — FINAL EMPLOYEE UI
-   ============================================================ */
-
-.leaves-page {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 28px 32px 48px;
-  color: #192842;
-}
-
-/* Page header */
-
-.leaves-page .enterprise-page-header {
+.leave-actions-empty-icon {
+  width: 54px;
+  height: 54px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 22px;
-}
-
-.leaves-page .enterprise-page-header h1 {
-  margin: 0;
-  color: #192842;
-  font-size: 29px;
-  line-height: 1.15;
-  font-weight: 750;
-  letter-spacing: -1px;
-}
-
-.leaves-page .enterprise-page-header p {
-  margin: 8px 0 0;
-  color: #7c899e;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.leaves-page .secondary-page-action {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding: 0 15px;
-  border: 1px solid #d7d2ff;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #4f46e5;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: .16s ease;
+  margin-bottom: 16px;
+  border: 1px solid #dce5f7;
+  border-radius: 14px;
+  background: #f1f5ff;
+  color: #4169d8;
 }
 
-.leaves-page .secondary-page-action:hover {
-  background: #f7f5ff;
-  border-color: #bdb7ff;
+.leave-actions-empty-icon svg {
+  width: 25px;
+  height: 25px;
 }
 
-/* Tabs */
-
-.leaves-page .leave-tabs {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  width: fit-content;
-  margin-bottom: 18px;
-  padding: 4px;
-  border: 1px solid #e3e7ef;
-  border-radius: 11px;
-  background: #ffffff;
-  box-shadow: 0 2px 10px rgba(25, 39, 67, .025);
-}
-
-.leaves-page .leave-tabs button {
-  min-height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #66748c;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.leaves-page .leave-tabs button:hover {
-  background: #f7f5ff;
-  color: #4f46e5;
-}
-
-.leaves-page .leave-tabs button.active {
-  background: #4f46e5;
-  color: #ffffff;
-  box-shadow: 0 3px 8px rgba(79, 70, 229, .18);
-}
-
-/* Apply Leave workspace */
-
-.leaves-page .leave-content {
-  width: 100%;
-}
-
-.leaves-page .leave-content > .layout {
-  display: block !important;
-  width: 100%;
-  margin: 0;
-}
-
-/* Main card */
-
-.leaves-page .leave-content > .layout > .form-panel {
-  width: min(100%, 1180px) !important;
-  max-width: 1180px !important;
-  margin: 0 auto !important;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 1px solid #e5eaf2;
-  border-radius: 15px;
-  background: #ffffff;
-  box-shadow:
-    0 2px 12px rgba(25, 39, 67, .035),
-    0 10px 28px rgba(25, 39, 67, .025);
-}
-
-/* Form header */
-
-.leaves-page .form-panel .section-heading {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 22px 26px;
-  margin: 0;
-  border-bottom: 1px solid #edf0f5;
-  background: #ffffff;
-}
-
-.leaves-page .form-panel .heading-icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 10px;
-  background: #eeeaff;
-  color: #5b4fe1;
-  font-size: 17px;
-}
-
-.leaves-page .leave-form-eyebrow {
-  display: block;
-  margin-bottom: 3px;
-  color: #7b88a0;
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 1.2px;
-}
-
-.leaves-page .form-panel h2 {
-  margin: 0;
-  color: #202d46;
-  font-size: 19px;
-  line-height: 1.25;
-  font-weight: 750;
-  letter-spacing: -.25px;
-}
-
-.leaves-page .form-panel .subtitle {
-  margin: 5px 0 0;
-  color: #7c899e;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* Fields */
-
-.leaves-page .form-panel .form-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 18px;
-  margin: 0;
-  padding: 25px 26px 4px;
-}
-
-.leaves-page .form-panel .form-fields > .field:first-child {
-  grid-column: 1 / -1;
-}
-
-.leaves-page .form-panel .form-fields > .field:last-child {
-  grid-column: 1 / -1;
-}
-
-.leaves-page .form-panel .field {
-  min-width: 0;
-}
-
-.leaves-page .form-panel .field label {
-  display: block;
-  margin-bottom: 7px;
-  color: #46546c;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.leaves-page .form-panel .field select,
-.leaves-page .form-panel .field input,
-.leaves-page .form-panel .field textarea {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #dfe5ef;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #25334d;
-  font-size: 12px;
-  transition:
-    border-color .16s ease,
-    box-shadow .16s ease,
-    background .16s ease;
-}
-
-.leaves-page .form-panel .field select,
-.leaves-page .form-panel .field input {
-  height: 44px;
-  padding: 0 12px;
-}
-
-.leaves-page .form-panel .field textarea {
-  min-height: 120px;
-  padding: 12px;
-  resize: vertical;
-  line-height: 1.55;
-}
-
-.leaves-page .form-panel .field select:focus,
-.leaves-page .form-panel .field input:focus,
-.leaves-page .form-panel .field textarea:focus {
-  outline: none;
-  border-color: #8d85eb;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, .08);
-}
-
-.leaves-page .form-panel .field select:hover,
-.leaves-page .form-panel .field input:hover,
-.leaves-page .form-panel .field textarea:hover {
-  border-color: #cbd3e0;
-}
-
-/* Dates */
-
-.leaves-page .form-panel .date-fields {
-  display: contents;
-}
-
-.leaves-page .form-panel .date-fields > .field {
-  min-width: 0;
-}
-
-/* Half-day helper */
-
-.leaves-page .form-panel > p:not(.err):not(.ok):not(.warn) {
-  margin: 0 26px;
-  color: #7c899e;
-  font-size: 11px;
-}
-
-/* Validation / status messages */
-
-.leaves-page .form-panel .warn,
-.leaves-page .form-panel .err,
-.leaves-page .form-panel .ok {
-  margin: 17px 26px 0;
-  padding: 11px 13px;
-  border-radius: 9px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.leaves-page .form-panel .warn {
-  background: #fff8eb;
-  border: 1px solid #f5dfb0;
-  color: #a16207;
-}
-
-.leaves-page .form-panel .err {
-  background: #fff1f2;
-  border: 1px solid #fecdd3;
-  color: #dc2626;
-}
-
-.leaves-page .form-panel .ok {
-  background: #effaf5;
-  border: 1px solid #ccebdd;
-  color: #16875b;
-}
-
-/* Footer */
-
-.leaves-page .form-panel .form-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-top: 24px;
-  padding: 18px 26px 21px;
-  border-top: 1px solid #edf0f5;
-  background: #fbfcfe;
-}
-
-.leaves-page .form-panel .footer-note {
-  max-width: 460px;
-  margin: 0;
-  color: #7c899e;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.leaves-page .form-panel .form-footer button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: 9px;
-  background: #4f46e5;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 3px 9px rgba(79, 70, 229, .16);
-  transition:
-    background .16s ease,
-    transform .16s ease,
-    box-shadow .16s ease;
-}
-
-.leaves-page .form-panel .form-footer button:hover:not(:disabled) {
-  background: #4338ca;
-  transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(79, 70, 229, .2);
-}
-
-.leaves-page .form-panel .form-footer button:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-/* Desktop breathing room */
-
-@media (min-width: 1100px) {
-  .leaves-page .leave-content > .layout > .form-panel {
-    min-height: 480px;
-  }
-}
-
-/* Tablet */
-
-@media (max-width: 800px) {
-  .leaves-page {
-    padding: 24px 20px 40px;
-  }
-
-  .leaves-page .form-panel .form-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .form-panel .form-fields > .field:first-child,
-  .leaves-page .form-panel .form-fields > .field:last-child {
-    grid-column: auto;
-  }
-}
-
-/* Mobile */
-
-@media (max-width: 600px) {
-  .leaves-page {
-    padding: 20px 16px 32px;
-  }
-
-  .leaves-page .enterprise-page-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .leaves-page .secondary-page-action {
-    width: 100%;
-  }
-
-  .leaves-page .leave-tabs {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .leaves-page .leave-tabs button {
-    flex: 1 0 auto;
-  }
-
-  .leaves-page .form-panel .section-heading,
-  .leaves-page .form-panel .form-fields,
-  .leaves-page .form-panel .form-footer {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .leaves-page .form-panel .form-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .leaves-page .form-panel .form-footer button {
-    width: 100%;
-  }
-}
-</style>
-
-
-<style scoped>
-/* ============================================================
-   APPLY LEAVE — PRODUCT-QUALITY EMPLOYEE UI
-   ============================================================ */
-
-.leaves-page .apply-form-card {
-  width: min(100%, 1180px) !important;
-  max-width: 1180px !important;
-  margin: 0 auto !important;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 1px solid #e4e8f1;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow:
-    0 2px 8px rgba(25, 39, 67, .025),
-    0 16px 40px rgba(25, 39, 67, .045);
-}
-
-/* ------------------------------------------------------------
-   HERO
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-form-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 25px 28px;
-  border-bottom: 1px solid #ebeef5;
-  background:
-    linear-gradient(
-      135deg,
-      #fbfaff 0%,
-      #f7f6ff 55%,
-      #ffffff 100%
-    );
-}
-
-.leaves-page .apply-form-heading {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  min-width: 0;
-}
-
-.leaves-page .apply-form-icon {
-  display: grid;
-  width: 46px;
-  height: 46px;
-  flex-shrink: 0;
-  place-items: center;
-  border: 1px solid #ded9ff;
-  border-radius: 13px;
-  background: #efedff;
-  color: #5548db;
-  box-shadow:
-    0 4px 10px rgba(79, 70, 229, .08);
-}
-
-.leaves-page .apply-form-icon span {
-  font-size: 20px;
-  line-height: 1;
-}
-
-.leaves-page .leave-form-eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: #6f6a9b;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 1.35px;
-}
-
-.leaves-page .apply-form-header h2 {
-  margin: 0;
-  color: #1d2942;
-  font-size: 22px;
-  line-height: 1.2;
-  font-weight: 780;
-  letter-spacing: -.45px;
-}
-
-.leaves-page .apply-form-header p {
-  max-width: 620px;
-  margin: 5px 0 0;
-  color: #7b879f;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.leaves-page .draft-chip {
-  flex-shrink: 0;
-  padding: 7px 10px;
-  border: 1px solid #ddd9ff;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #655bd1;
-  font-size: 10px;
-  font-weight: 750;
-}
-
-/* ------------------------------------------------------------
-   BODY
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-form-body {
-  padding: 27px 28px 25px;
-}
-
-.leaves-page .apply-form-section {
-  padding: 0;
-}
-
-.leaves-page .apply-form-section + .apply-form-section {
-  margin-top: 30px;
-  padding-top: 28px;
-  border-top: 1px solid #edf0f5;
-}
-
-.leaves-page .apply-section-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  margin-bottom: 18px;
-}
-
-.leaves-page .apply-section-number {
-  display: grid;
-  width: 27px;
-  height: 27px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 8px;
-  background: #eeeaff;
-  color: #5548db;
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.leaves-page .apply-section-heading strong {
-  display: block;
-  color: #25324c;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.leaves-page .apply-section-heading p {
-  margin: 3px 0 0;
-  color: #8a95a9;
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-/* ------------------------------------------------------------
-   FIELDS
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.leaves-page .apply-fields .field-full {
-  grid-column: 1 / -1;
-}
-
-.leaves-page .apply-fields .field {
-  min-width: 0;
-}
-
-.leaves-page .apply-fields .field label,
-.leaves-page .reason-section .field label {
-  display: block;
-  margin-bottom: 7px;
-  color: #43516b;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: .05px;
-}
-
-.leaves-page .apply-fields select,
-.leaves-page .apply-fields input,
-.leaves-page .reason-section textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #dce2ec;
-  border-radius: 11px;
-  background: #ffffff;
-  color: #26344e;
-  font-size: 12px;
-  transition:
-    border-color .16s ease,
-    box-shadow .16s ease,
-    background .16s ease;
-}
-
-.leaves-page .apply-fields select,
-.leaves-page .apply-fields input {
-  height: 46px;
-  padding: 0 13px;
-}
-
-.leaves-page .apply-fields select:hover,
-.leaves-page .apply-fields input:hover,
-.leaves-page .reason-section textarea:hover {
-  border-color: #c6cfdd;
-}
-
-.leaves-page .apply-fields select:focus,
-.leaves-page .apply-fields input:focus,
-.leaves-page .reason-section textarea:focus {
-  outline: none;
-  border-color: #867deb;
-  box-shadow: 0 0 0 4px rgba(79, 70, 229, .07);
-}
-
-.leaves-page .reason-section textarea {
-  min-height: 125px;
-  padding: 13px;
-  resize: vertical;
-  line-height: 1.6;
-}
-
-.leaves-page .reason-section textarea::placeholder {
-  color: #a2abbb;
-}
-
-.leaves-page .field-hint {
-  margin-top: 6px;
-  color: #9aa4b4;
-  font-size: 9px;
-}
-
-/* ------------------------------------------------------------
-   HALF-DAY OPTIONS
-   ------------------------------------------------------------ */
-
-.leaves-page .session-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.leaves-page .session-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 58px;
-  padding: 0 13px;
-  border: 1px solid #dfe4ed;
-  border-radius: 10px;
-  background: #ffffff;
-  cursor: pointer;
-  transition:
-    border-color .16s ease,
-    background .16s ease,
-    box-shadow .16s ease;
-}
-
-.leaves-page .session-option:hover {
-  border-color: #c8c2fb;
-  background: #faf9ff;
-}
-
-.leaves-page .session-option input {
-  width: 15px;
-  height: 15px;
-  accent-color: #5548db;
-}
-
-.leaves-page .session-option span {
-  display: grid;
-  gap: 2px;
-}
-
-.leaves-page .session-option strong {
-  color: #33415c;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.leaves-page .session-option small {
-  color: #8c97aa;
-  font-size: 9px;
-}
-
-/* ------------------------------------------------------------
-   SUMMARY
-   ------------------------------------------------------------ */
-
-.leaves-page .request-summary {
-  margin-top: 27px;
-  padding: 17px;
-  border: 1px solid #e5e1ff;
-  border-radius: 13px;
-  background: #faf9ff;
-}
-
-.leaves-page .request-summary-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-}
-
-.leaves-page .summary-eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: #756ca8;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 1.15px;
-}
-
-.leaves-page .request-summary-heading strong {
-  color: #2f3b56;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.leaves-page .summary-status {
-  padding: 6px 9px;
-  border: 1px solid #e5e1ea;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #8a93a4;
-  font-size: 9px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.leaves-page .summary-status.ready {
-  border-color: #cfe7dc;
-  background: #f2fbf6;
-  color: #16875b;
-}
-
-.leaves-page .summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.leaves-page .summary-item {
-  padding: 12px;
-  border: 1px solid #ebe8f7;
-  border-radius: 10px;
-  background: #ffffff;
-}
-
-.leaves-page .summary-item span {
-  display: block;
-  margin-bottom: 5px;
-  color: #929baa;
-  font-size: 9px;
-}
-
-.leaves-page .summary-item strong {
-  color: #2f3b56;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-/* ------------------------------------------------------------
-   MESSAGES
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-form-body > .warn,
-.leaves-page .apply-form-body > .err,
-.leaves-page .apply-form-body > .ok {
-  margin: 15px 0 0;
-  padding: 11px 13px;
-  border-radius: 10px;
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.leaves-page .apply-form-body > .warn {
-  border: 1px solid #f2dfb3;
-  background: #fff9ee;
-  color: #a16207;
-}
-
-.leaves-page .apply-form-body > .err {
-  border: 1px solid #fecdd3;
-  background: #fff2f4;
-  color: #dc2626;
-}
-
-.leaves-page .apply-form-body > .ok {
-  border: 1px solid #cde9db;
-  background: #f1fbf5;
-  color: #16875b;
-}
-
-/* ------------------------------------------------------------
-   FOOTER
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-form-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 18px 28px;
-  border-top: 1px solid #ebeff5;
-  background: #fbfcfe;
-}
-
-.leaves-page .footer-message {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.leaves-page .footer-check {
-  display: grid;
-  width: 31px;
-  height: 31px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 9px;
-  background: #eaf7f0;
-  color: #16875b;
-  font-size: 14px;
-  font-weight: 800;
-}
-
-.leaves-page .footer-message strong {
-  display: block;
-  color: #34415a;
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.leaves-page .footer-message p {
-  margin: 2px 0 0;
-  color: #8a95a9;
-  font-size: 9px;
-  line-height: 1.4;
-}
-
-.leaves-page .apply-form-footer button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  min-width: 190px;
-  min-height: 42px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 10px;
-  background: #5146d8;
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 750;
-  box-shadow: 0 5px 12px rgba(79, 70, 229, .15);
-  cursor: pointer;
-  transition:
-    background .16s ease,
-    transform .16s ease,
-    box-shadow .16s ease;
-}
-
-.leaves-page .apply-form-footer button:hover:not(:disabled) {
-  background: #4338ca;
-  transform: translateY(-1px);
-  box-shadow: 0 7px 16px rgba(79, 70, 229, .2);
-}
-
-.leaves-page .apply-form-footer button:disabled {
-  opacity: .45;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-.leaves-page .submit-arrow {
+.leave-actions-empty h3 {
+  margin: 0 0 7px;
+  color: #2b3850;
   font-size: 15px;
-  line-height: 1;
+  font-weight: 750;
 }
 
-/* ------------------------------------------------------------
-   RESPONSIVE
-   ------------------------------------------------------------ */
-
-@media (max-width: 800px) {
-  .leaves-page .apply-form-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .leaves-page .apply-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .apply-fields .field-full {
-    grid-column: auto;
-  }
-
-  .leaves-page .summary-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .apply-form-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .leaves-page .apply-form-footer button {
-    width: 100%;
-  }
-}
-
-@media (max-width: 560px) {
-  .leaves-page .apply-form-body,
-  .leaves-page .apply-form-header,
-  .leaves-page .apply-form-footer {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .leaves-page .session-options {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .draft-chip {
-    align-self: flex-start;
-  }
-}
-</style>
-
-
-<style scoped>
-/* ============================================================
-   LEAVES — PREMIUM EMPLOYEE APPLY EXPERIENCE
-   ============================================================ */
-
-.leaves-page .leave-content > .layout {
-  display: grid !important;
-  grid-template-columns:
-    minmax(0, 1fr)
-    minmax(285px, 330px) !important;
-  gap: 20px !important;
-  align-items: start;
-  width: 100%;
-}
-
-/* ------------------------------------------------------------
-   MAIN FORM
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-form-card {
-  width: 100% !important;
-  max-width: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 1px solid #e4e8f0;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow:
-    0 2px 8px rgba(20, 32, 56, .025),
-    0 14px 34px rgba(20, 32, 56, .035);
-}
-
-/* Cleaner header */
-
-.leaves-page .apply-form-header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 25px 26px 23px;
-  border-bottom: 1px solid #edf0f5;
-  background:
-    linear-gradient(
-      135deg,
-      #ffffff 0%,
-      #faf9ff 100%
-    );
-}
-
-.leaves-page .apply-form-heading {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  min-width: 0;
-}
-
-.leaves-page .apply-form-icon {
-  display: grid;
-  width: 43px;
-  height: 43px;
-  flex-shrink: 0;
-  place-items: center;
-  border: 1px solid #ddd8ff;
-  border-radius: 12px;
-  background: #f0eeff;
-  color: #5648da;
-  box-shadow: none;
-}
-
-.leaves-page .apply-form-icon span {
-  font-size: 18px;
-}
-
-.leaves-page .leave-form-eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: #736ba5;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 1.25px;
-}
-
-.leaves-page .apply-form-header h2 {
+.leave-actions-empty p {
+  max-width: 470px;
   margin: 0;
-  color: #1d2941;
-  font-size: 21px;
-  font-weight: 760;
-  letter-spacing: -.4px;
-}
-
-.leaves-page .apply-form-header p {
-  margin: 5px 0 0;
-  color: #7f8aa0;
+  color: #8a95a7;
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
-.leaves-page .draft-chip {
-  display: none;
-}
-
-/* Body */
-
-.leaves-page .apply-form-body {
-  padding: 25px 26px 26px;
-}
-
-/* Remove "01 / 02" visual treatment */
-
-.leaves-page .apply-section-number {
-  display: none;
-}
-
-.leaves-page .apply-section-heading {
-  margin-bottom: 15px;
-}
-
-.leaves-page .apply-section-heading strong {
-  color: #27344d;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.leaves-page .apply-section-heading p {
-  margin-top: 3px;
-  color: #929bac;
-  font-size: 10px;
-}
-
-.leaves-page .apply-form-section + .apply-form-section {
-  margin-top: 25px;
-  padding-top: 25px;
-  border-top: 1px solid #edf0f4;
-}
-
-/* Fields */
-
-.leaves-page .apply-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 17px;
-}
-
-.leaves-page .apply-fields .field-full {
-  grid-column: 1 / -1;
-}
-
-.leaves-page .apply-fields .field label,
-.leaves-page .reason-section .field label {
-  display: block;
-  margin-bottom: 7px;
-  color: #48546b;
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.leaves-page .apply-fields select,
-.leaves-page .apply-fields input,
-.leaves-page .reason-section textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #dfe4ed;
-  border-radius: 10px;
+.leave-actions-empty-btn {
+  height: 36px;
+  margin-top: 20px;
+  padding: 0 16px;
+  border: 1px solid #d9e0eb;
+  border-radius: 7px;
   background: #ffffff;
-  color: #25334c;
+  color: #40516f;
   font-size: 11px;
-}
-
-.leaves-page .apply-fields select,
-.leaves-page .apply-fields input {
-  height: 43px;
-  padding: 0 12px;
-}
-
-.leaves-page .reason-section textarea {
-  min-height: 118px;
-  padding: 12px;
-  resize: vertical;
-  line-height: 1.55;
-}
-
-.leaves-page .apply-fields select:focus,
-.leaves-page .apply-fields input:focus,
-.leaves-page .reason-section textarea:focus {
-  outline: none;
-  border-color: #8178e7;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, .065);
-}
-
-.leaves-page .apply-fields select:hover,
-.leaves-page .apply-fields input:hover,
-.leaves-page .reason-section textarea:hover {
-  border-color: #cbd3df;
-}
-
-.leaves-page .field-hint {
-  margin-top: 6px;
-  color: #99a2b1;
-  font-size: 9px;
-}
-
-/* Half-day */
-
-.leaves-page .session-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
-}
-
-.leaves-page .session-option {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 54px;
-  padding: 0 12px;
-  border: 1px solid #dfe4ec;
-  border-radius: 10px;
-  background: #ffffff;
-}
-
-.leaves-page .session-option:hover {
-  border-color: #c8c1fa;
-  background: #faf9ff;
-}
-
-.leaves-page .session-option input {
-  width: 14px;
-  height: 14px;
-  accent-color: #5548da;
-}
-
-.leaves-page .session-option span {
-  display: grid;
-  gap: 2px;
-}
-
-.leaves-page .session-option strong {
-  color: #35415a;
-  font-size: 10px;
-}
-
-.leaves-page .session-option small {
-  color: #929baa;
-  font-size: 9px;
-}
-
-/* Messages */
-
-.leaves-page .apply-form-body > .warn,
-.leaves-page .apply-form-body > .err,
-.leaves-page .apply-form-body > .ok {
-  margin: 16px 0 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  font-size: 10px;
-}
-
-.leaves-page .apply-form-body > .warn {
-  border: 1px solid #f3dfb1;
-  background: #fff9ee;
-  color: #a16207;
-}
-
-.leaves-page .apply-form-body > .err {
-  border: 1px solid #fecdd3;
-  background: #fff2f4;
-  color: #dc2626;
-}
-
-.leaves-page .apply-form-body > .ok {
-  border: 1px solid #cde8da;
-  background: #f0faf4;
-  color: #16875b;
-}
-
-/* Footer */
-
-.leaves-page .apply-form-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 17px 26px;
-  border-top: 1px solid #edf0f5;
-  background: #fbfcfe;
-}
-
-.leaves-page .footer-message {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.leaves-page .footer-check {
-  display: grid;
-  width: 29px;
-  height: 29px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 8px;
-  background: #eaf7f0;
-  color: #16875b;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.leaves-page .footer-message strong {
-  display: block;
-  color: #38445b;
-  font-size: 10px;
-}
-
-.leaves-page .footer-message p {
-  margin: 2px 0 0;
-  color: #929baa;
-  font-size: 9px;
-}
-
-.leaves-page .apply-form-footer button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 11px;
-  min-width: 178px;
-  height: 41px;
-  padding: 0 15px;
-  border: 0;
-  border-radius: 9px;
-  background: #5146d8;
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 750;
-  box-shadow: 0 5px 12px rgba(79, 70, 229, .15);
+  font-weight: 700;
   cursor: pointer;
+  transition: all .15s ease;
 }
 
-.leaves-page .apply-form-footer button:hover:not(:disabled) {
-  background: #4338ca;
+.leave-actions-empty-btn:hover {
+  border-color: #b9c5d8;
+  background: #f7f9fc;
 }
 
-.leaves-page .apply-form-footer button:disabled {
-  opacity: .45;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-/* ------------------------------------------------------------
-   RIGHT SUMMARY PANEL
-   ------------------------------------------------------------ */
-
-.leaves-page .apply-summary-panel {
-  position: sticky;
-  top: 22px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 20px;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  background: #ffffff;
-  box-shadow:
-    0 2px 8px rgba(20, 32, 56, .025),
-    0 12px 30px rgba(20, 32, 56, .03);
-}
-
-.leaves-page .apply-summary-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.leaves-page .apply-summary-eyebrow {
-  display: block;
-  margin-bottom: 5px;
-  color: #756ca6;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 1.15px;
-}
-
-.leaves-page .apply-summary-top h3 {
-  margin: 0;
-  color: #26344d;
-  font-size: 16px;
-  font-weight: 750;
-  letter-spacing: -.2px;
-}
-
-.leaves-page .apply-summary-top p {
-  margin: 4px 0 0;
-  color: #8a95a8;
-  font-size: 9px;
-  line-height: 1.45;
-}
-
-.leaves-page .apply-summary-status {
-  flex-shrink: 0;
-  padding: 6px 8px;
-  border: 1px solid #e0e4eb;
-  border-radius: 999px;
-  background: #fafbfc;
-  color: #8c95a5;
-  font-size: 8px;
-  font-weight: 750;
-}
-
-.leaves-page .apply-summary-status.ready {
-  border-color: #cde6d8;
-  background: #f0faf4;
-  color: #16875b;
-}
-
-.leaves-page .apply-summary-list {
-  display: grid;
-  margin-top: 18px;
-  border-top: 1px solid #edf0f4;
-}
-
-.leaves-page .apply-summary-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  padding: 13px 0;
-  border-bottom: 1px solid #edf0f4;
-}
-
-.leaves-page .apply-summary-row span {
-  color: #939cab;
-  font-size: 9px;
-}
-
-.leaves-page .apply-summary-row strong {
-  color: #33415a;
-  font-size: 10px;
-  font-weight: 750;
-  text-align: right;
-}
-
-.leaves-page .apply-summary-divider {
-  height: 1px;
-  margin: 18px 0;
-  background: #edf0f4;
-}
-
-.leaves-page .apply-approver-card {
-  display: grid;
-  grid-template-columns: 31px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  padding: 13px;
-  border: 1px solid #e8e9f5;
-  border-radius: 11px;
-  background: #fafaff;
-}
-
-.leaves-page .apply-approver-icon {
-  display: grid;
-  width: 31px;
-  height: 31px;
-  place-items: center;
-  border-radius: 8px;
-  background: #eeeaff;
-  color: #5548da;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.leaves-page .apply-approver-card strong {
-  display: block;
-  color: #34415a;
-  font-size: 10px;
-}
-
-.leaves-page .apply-approver-card p {
-  margin: 3px 0 0;
-  color: #9099a9;
-  font-size: 9px;
-  line-height: 1.45;
-}
-
-.leaves-page .apply-summary-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 13px;
-}
-
-.leaves-page .apply-summary-note > span {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 6px;
-  background: #f1f3f8;
-  color: #718096;
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.leaves-page .apply-summary-note p {
-  margin: 1px 0 0;
-  color: #8b95a5;
-  font-size: 9px;
-  line-height: 1.5;
-}
-
-/* ------------------------------------------------------------
-   RESPONSIVE
-   ------------------------------------------------------------ */
-
-@media (max-width: 900px) {
-  .leaves-page .leave-content > .layout {
-    grid-template-columns: 1fr !important;
-  }
-
-  .leaves-page .apply-summary-panel {
-    position: static;
-  }
-}
-
-@media (max-width: 650px) {
-  .leaves-page .apply-form-body {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .leaves-page .apply-form-header,
-  .leaves-page .apply-form-footer {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .leaves-page .apply-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .apply-fields .field-full {
-    grid-column: auto;
-  }
-
-  .leaves-page .session-options {
-    grid-template-columns: 1fr;
-  }
-
-  .leaves-page .apply-form-footer {
-    align-items: stretch;
+@media (max-width: 700px) {
+  .leave-actions-heading {
     flex-direction: column;
+    padding: 20px;
   }
 
-  .leaves-page .apply-form-footer button {
+  .leave-action-search {
+    flex-wrap: wrap;
+    padding: 16px 20px;
+  }
+
+  .leave-action-search label {
     width: 100%;
   }
+
+  .leave-actions-empty {
+    min-height: 260px;
+    padding: 40px 20px;
+  }
 }
+
+
+
+/* =========================================================
+   ACTION CENTER — SEARCH TOOLBAR REFINEMENT
+   ========================================================= */
+
+.leave-actions-card .leave-action-search {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: flex-start !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  min-height: 0 !important;
+  padding: 16px 26px !important;
+  border-bottom: 1px solid #edf1f6 !important;
+  background: #fbfcfe !important;
+}
+
+.leave-actions-card .leave-action-search label {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  width: 220px !important;
+  flex: 0 0 220px !important;
+  margin: 0 !important;
+}
+
+.leave-actions-card .leave-action-search label span {
+  display: block !important;
+  color: #59677e !important;
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  font-weight: 700 !important;
+}
+
+.leave-actions-card .leave-action-search input {
+  width: 220px !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+  padding: 0 10px !important;
+  border: 1px solid #dce2eb !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
+  color: #34425b !important;
+  font-size: 11px !important;
+}
+
+.leave-actions-card .leave-action-search-btn,
+.leave-actions-card .leave-action-clear-btn {
+  flex: 0 0 auto !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+@media (max-width: 700px) {
+  .leave-actions-card .leave-action-search {
+    flex-wrap: wrap !important;
+  }
+
+  .leave-actions-card .leave-action-search label {
+    width: 100% !important;
+    flex-basis: 100% !important;
+  }
+
+  .leave-actions-card .leave-action-search input {
+    width: 100% !important;
+  }
+}
+
 </style>

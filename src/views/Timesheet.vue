@@ -6,6 +6,8 @@ import api, { errMsg, isManager } from '../api'
 import TimesheetTabs from '../components/timesheets/TimesheetTabs.vue'
 import TimesheetDeadline from '../components/timesheets/TimesheetDeadline.vue'
 import TimesheetCreateForm from '../components/timesheets/TimesheetCreateForm.vue'
+import TimesheetCreateSidebar from '../components/timesheets/TimesheetCreateSidebar.vue'
+import TimesheetWeeklySummary from '../components/timesheets/TimesheetWeeklySummary.vue'
 import TimesheetList from '../components/timesheets/TimesheetList.vue'
 import TimesheetDetail from '../components/timesheets/TimesheetDetail.vue'
 
@@ -13,6 +15,7 @@ const employee = ref(null)
 const deadlinePanel = ref(null)
 
 const timesheets = ref([])
+const submittedDates = ref([])
 const teamTimesheets = ref([])
 const teamMembers = ref([])
 
@@ -21,6 +24,7 @@ const teamLoading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
 const submitting = ref(false)
+const submittingDate = ref('')
 const approving = ref(false)
 const rejecting = ref(false)
 
@@ -34,9 +38,30 @@ const showEdit = ref(false)
 const managerView = ref(false)
 const activeView = ref('mine')
 
+const getWeekRange = () => {
+  const today = new Date()
+  const day = today.getDay()
+  const diffToMonday = day === 0 ? -6 : 1 - day
+
+  const monday = new Date(today)
+  monday.setDate(today.getDate() + diffToMonday)
+
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+
+  const format = date => date.toLocaleDateString('en-CA')
+
+  return {
+    start_date: format(monday),
+    end_date: format(sunday)
+  }
+}
+
+const initialWeek = getWeekRange()
+
 const newTimesheet = ref({
-  start_date: new Date().toLocaleDateString('en-CA'),
-  end_date: new Date().toLocaleDateString('en-CA'),
+  start_date: initialWeek.start_date,
+  end_date: initialWeek.end_date,
   activity_type: '',
   project: '',
   deliverables: '',
@@ -92,6 +117,8 @@ function setupManagerView() {
 ========================= */
 
 watch(activeView, () => {
+  console.log('[Timesheet] activeView changed:', activeView.value)
+  console.log('[Timesheet] resetting showCreate')
   selectedTimesheet.value = null
   editingTimesheet.value = null
   showEdit.value = false
@@ -102,6 +129,16 @@ watch(activeView, () => {
 /* =========================
    Load My Timesheets
 ========================= */
+
+async function loadSubmittedDates() {
+  if (!employee.value) return
+
+  const res = await api.get(
+    '/api/method/hr_portal_custom.overrides.timesheet.get_submitted_dates'
+  )
+
+  submittedDates.value = res.data.message || []
+}
 
 async function loadMyTimesheets() {
   if (!employee.value) return
@@ -134,6 +171,8 @@ async function loadMyTimesheets() {
   )
 
   timesheets.value = res.data.data
+
+  await loadSubmittedDates()
 }
 
 /* =========================
@@ -213,11 +252,45 @@ async function loadTeamTimesheets(email) {
   }
 }
 
+function getAvailablePostingDate() {
+  let date = new Date()
+
+  for (let i = 0; i < 60; i++) {
+    const value = date.toLocaleDateString('en-CA')
+
+    if (!submittedDates.value.includes(value)) {
+      return value
+    }
+
+    date.setDate(date.getDate() - 1)
+  }
+
+  return new Date().toLocaleDateString('en-CA')
+}
+
+function openCreateTimesheet() {
+  console.log('[Timesheet] openCreateTimesheet called')
+  const date = getAvailablePostingDate()
+
+  selectedTimesheet.value = null
+  showEdit.value = false
+  editingTimesheet.value = null
+
+  newTimesheet.value = {
+    ...newTimesheet.value,
+    start_date: date,
+    end_date: date
+  }
+
+  showCreate.value = true
+  console.log('[Timesheet] showCreate set to:', showCreate.value)
+}
+
 /* =========================
    Create Timesheet
 ========================= */
 
-async function createTimesheet(entries) {
+async function createTimesheet(entries, action = 'draft') {
   error.value = ''
 
   if (!entries || !entries.length) {
@@ -254,24 +327,45 @@ async function createTimesheet(entries) {
       employee: employee.value.name,
       company: employee.value.company,
       start_date: newTimesheet.value.start_date,
-      end_date: newTimesheet.value.end_date,
+      end_date: newTimesheet.value.start_date,
       time_logs: entries.map(entry => ({
         activity_type: entry.activity_type,
         project: entry.project || null,
         deliverables: entry.deliverables || null,
         description: entry.description || null,
-        hours: Number(entry.hours)
+        hours: Number(entry.hours),
+        from_time: entry.date
+          ? `${entry.date} 09:00:00`
+          : null
       }))
     }
 
-    await api.post(
+    const createResponse = await api.post(
       '/api/resource/Timesheet',
       payload
     )
 
+    const createdTimesheet = createResponse.data?.data
+
+    if (action === 'submit' && createdTimesheet?.name) {
+      const timesheetResponse = await api.get(
+        `/api/resource/Timesheet/${encodeURIComponent(createdTimesheet.name)}`
+      )
+
+      const timesheet = timesheetResponse.data.data
+
+      await api.post(
+        '/api/method/frappe.model.workflow.apply_workflow',
+        {
+          doc: JSON.stringify(timesheet),
+          action: 'Submit'
+        }
+      )
+    }
+
     showCreate.value = false
 
-    const resetDate = new Date().toLocaleDateString('en-CA')
+    const resetDate = getAvailablePostingDate()
 
     newTimesheet.value = {
       start_date: resetDate,
@@ -355,10 +449,10 @@ function closeTimesheet() {
 }
 
 /* =========================
-   Submit Timesheet
+   Submit Single Day
 ========================= */
 
-async function submitTimesheet(name) {
+async function submitDay(name, date) {
   error.value = ''
 
   if (
@@ -369,34 +463,16 @@ async function submitTimesheet(name) {
     return
   }
 
-  if (submitting.value) return
+  if (submittingDate.value) return
 
-  submitting.value = true
+  submittingDate.value = date
 
   try {
-    const res = await api.get(
-      `/api/resource/Timesheet/${encodeURIComponent(name)}`
-    )
-
-    const timesheet = res.data.data
-
-    if (
-      timesheet.employee !== employee.value.name ||
-      timesheet.workflow_state !== 'Draft' ||
-      timesheet.docstatus !== 0
-    ) {
-      error.value =
-        'Only your own Draft timesheets can be submitted'
-      return
-    }
-
-    const action = 'Submit'
-
     await api.post(
-      '/api/method/frappe.model.workflow.apply_workflow',
+      '/api/method/hr_portal_custom.overrides.timesheet.submit_day',
       {
-        doc: JSON.stringify(timesheet),
-        action
+        timesheet_name: name,
+        date
       }
     )
 
@@ -414,10 +490,10 @@ async function submitTimesheet(name) {
   } catch (e) {
     error.value = errMsg(
       e,
-      'Could not submit timesheet'
+      'Could not submit this day'
     )
   } finally {
-    submitting.value = false
+    submittingDate.value = ''
   }
 }
 
@@ -627,7 +703,10 @@ async function updateTimesheet(entries) {
         project: entry.project || null,
         deliverables: entry.deliverables || null,
         description: entry.description || null,
-        hours: Number(entry.hours)
+        hours: Number(entry.hours),
+        from_time: entry.date
+          ? `${entry.date} 09:00:00`
+          : null
       }))
     }
 
@@ -679,7 +758,8 @@ onMounted(async () => {
           fields: JSON.stringify([
             'name',
             'employee_name',
-            'company'
+            'company',
+            'department'
           ])
         }
       }
@@ -741,12 +821,7 @@ onMounted(async () => {
         "
         type="button"
         class="create-btn"
-        @click="
-          selectedTimesheet = null;
-          showEdit = false;
-          editingTimesheet = null;
-          showCreate = true
-        "
+        @click="openCreateTimesheet"
       >
         <span aria-hidden="true">+</span>
         Create timesheet
@@ -773,49 +848,7 @@ onMounted(async () => {
       v-model="activeView"
     />
 
-    <section
-      v-if="showOverview"
-      class="timesheet-overview"
-      aria-label="Timesheet overview"
-    >
-      <article class="timesheet-stat">
-        <div class="stat-heading">
-          <span>Total timesheets</span>
-          <span class="stat-icon stat-blue">▤</span>
-        </div>
-        <strong>{{ timesheetStats.total }}</strong>
-        <small>Recorded timesheets</small>
-      </article>
-
-      <article class="timesheet-stat">
-        <div class="stat-heading">
-          <span>Recorded hours</span>
-          <span class="stat-icon stat-purple">◷</span>
-        </div>
-        <strong>{{ timesheetStats.hours.toFixed(1) }}</strong>
-        <small>Hours across loaded timesheets</small>
-      </article>
-
-      <article class="timesheet-stat">
-        <div class="stat-heading">
-          <span>Draft</span>
-          <span class="stat-icon stat-amber">◷</span>
-        </div>
-        <strong>{{ timesheetStats.draft }}</strong>
-        <small>Timesheets requiring submission</small>
-      </article>
-
-      <article class="timesheet-stat">
-        <div class="stat-heading">
-          <span>Submitted</span>
-          <span class="stat-icon stat-green">✓</span>
-        </div>
-        <strong>{{ timesheetStats.approved }}</strong>
-        <small>Submitted timesheets</small>
-      </article>
-    </section>
-
-    <TimesheetDeadline
+    <div
       v-if="
         activeView === 'mine' &&
         employee &&
@@ -823,35 +856,68 @@ onMounted(async () => {
         !showCreate &&
         !showEdit
       "
-      ref="deadlinePanel"
-    />
+      class="timesheet-dashboard-row"
+    >
+      <div class="timesheet-tracking-card">
+        <TimesheetDeadline
+          ref="deadlinePanel"
+        />
+      </div>
+
+      <TimesheetWeeklySummary
+        :hours="timesheetStats.hours"
+      />
+    </div>
 
     <!-- Create Timesheet -->
-    <TimesheetCreateForm
+    <div
       v-if="showCreate && activeView === 'mine'"
-      v-model:form="newTimesheet"
-      :saving="saving"
-      @submit="createTimesheet"
-      @cancel="showCreate = false"
-    />
+      class="timesheet-create-layout"
+    >
+      <div class="timesheet-create-main">
+        <TimesheetCreateForm
+          v-model:form="newTimesheet"
+          :saving="saving"
+          :employee-name="employee?.employee_name || ''"
+          :department="employee?.department || ''"
+          :submitted-dates="submittedDates"
+          @submit="createTimesheet"
+          @cancel="showCreate = false"
+        />
+      </div>
+
+      <TimesheetCreateSidebar
+        :form="newTimesheet"
+      />
+    </div>
 
     <!-- Edit Timesheet -->
-    <TimesheetCreateForm
+    <div
       v-if="
         showEdit &&
         editingTimesheet &&
         activeView === 'mine'
       "
-      :form="newTimesheet"
-      :saving="saving"
-      mode="edit"
-      :initial-entries="editingTimesheet.time_logs || []"
-      @submit="updateTimesheet"
-      @cancel="
-        showEdit = false;
-        editingTimesheet = null
-      "
-    />
+      class="timesheet-create-layout"
+    >
+      <div class="timesheet-create-main">
+        <TimesheetCreateForm
+          :form="newTimesheet"
+          :saving="saving"
+          mode="edit"
+          :initial-entries="editingTimesheet.time_logs || []"
+          @submit="updateTimesheet"
+          @cancel="
+            showEdit = false;
+            editingTimesheet = null
+          "
+        />
+      </div>
+
+      <TimesheetCreateSidebar
+        :form="newTimesheet"
+      />
+    </div>
 
     <!-- Loading -->
     <div
@@ -876,6 +942,7 @@ onMounted(async () => {
       :timesheet="selectedTimesheet"
       :loading="detailLoading"
       :submitting="submitting"
+      :submitting-date="submittingDate"
       :is-manager="managerView"
       :is-manager-view="
         managerView && activeView === 'team'
@@ -884,7 +951,7 @@ onMounted(async () => {
       :rejecting="rejecting"
       @back="closeTimesheet"
       @edit="editTimesheet"
-      @submit="submitTimesheet"
+      @submit-day="submitDay"
       @approve="approveTimesheet"
       @reject="rejectTimesheet"
     />
@@ -1299,6 +1366,80 @@ onMounted(async () => {
 
 @media (max-width: 700px) {
   .timesheet-page .timesheet-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.timesheet-dashboard-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 18px;
+  width: 100%;
+  margin: 0 0 18px;
+  align-items: stretch;
+}
+
+.timesheet-tracking-card {
+  min-width: 0;
+}
+
+.timesheet-dashboard-row :deep(.deadline-panel) {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.timesheet-dashboard-row :deep(.weekly-summary) {
+  width: 260px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .timesheet-dashboard-row {
+    grid-template-columns: minmax(0, 1fr) 230px;
+    gap: 14px;
+  }
+
+  .timesheet-dashboard-row :deep(.weekly-summary) {
+    width: 230px;
+  }
+}
+
+@media (max-width: 700px) {
+  .timesheet-dashboard-row {
+    grid-template-columns: 1fr;
+  }
+
+  .timesheet-dashboard-row :deep(.weekly-summary) {
+    width: 100%;
+  }
+}
+
+/* =========================================================
+   CREATE / EDIT TIMESHEET TWO-COLUMN LAYOUT
+   ========================================================= */
+
+.timesheet-create-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+  width: 100%;
+}
+
+.timesheet-create-main {
+  min-width: 0;
+}
+
+@media (max-width: 1150px) {
+  .timesheet-create-layout {
+    grid-template-columns: minmax(0, 1fr) 270px;
+  }
+}
+
+@media (max-width: 900px) {
+  .timesheet-create-layout {
     grid-template-columns: 1fr;
   }
 }

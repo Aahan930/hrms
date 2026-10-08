@@ -315,8 +315,10 @@ const pendingTimesheets = computed(() =>
 )
 
 const pendingCount = computed(() =>
-  pendingLeaves.value.length +
-  draftTimesheets.value.length
+  pendingLeaves.value.reduce(
+    (sum, leave) => sum + Number(leave.total_leave_days || 0),
+    0
+  )
 )
 
 const totalRecordedHours = computed(() =>
@@ -386,35 +388,24 @@ const leavePieData = computed(() => {
     })
   })
 
-  if (pendingLeaves.value.length) {
-    const pendingDays = pendingLeaves.value.reduce(
-      (sum, leave) => sum + leaveDays(leave),
-      0
-    )
-
-    const pendingRanges = pendingLeaves.value
-      .map(
-        leave =>
-          `${formatDate(leave.from_date)} → ${formatDate(leave.to_date)}`
-      )
-      .join('; ')
+  pendingLeaves.value.forEach((leave, index) => {
+    const days = leaveDays(leave)
 
     items.push({
-      id: 'pending-approval',
-      name: 'Pending approval',
-      value: pendingDays,
-      days: pendingDays,
-      color: '#f97316',
+      id: `pending-${leave.name || index}`,
+      name: leave.leave_type || 'Leave',
+      value: days,
+      days,
+      color: colors[index % colors.length],
       detail:
-        `${pendingDays} ` +
-        `${pendingDays === 1 ? 'day' : 'days'}`,
+        `${days} ${days === 1 ? 'day' : 'days'} · Pending`,
       tooltip:
-        `Pending approval\n` +
-        `${pendingRanges}\n` +
-        `${pendingDays} ` +
-        `${pendingDays === 1 ? 'day' : 'days'}`
+        `${leave.leave_type || 'Leave'} · Pending approval\n` +
+        `${formatDate(leave.from_date)} → ` +
+        `${formatDate(leave.to_date)}\n` +
+        `${days} ${days === 1 ? 'day' : 'days'}`
     })
-  }
+  })
 
   return items
 })
@@ -638,6 +629,7 @@ async function loadLeaves() {
         'leave_type',
         'from_date',
         'to_date',
+          'total_leave_days',
         'status',
         'workflow_state'
       ]),
@@ -849,7 +841,10 @@ onMounted(loadDashboard)
             </div>
           </div>
 
-          <div class="leave-pie-layout">
+          <div
+            v-if="leavePieData.length"
+            class="leave-pie-layout"
+          >
             <div class="leave-pie-chart">
               <svg
                 class="leave-pie-svg"
@@ -885,13 +880,13 @@ onMounted(loadDashboard)
               <div class="leave-pie-center">
                 <strong>
                   {{
-                    leavePieData.reduce(
-                      (sum, item) => sum + item.days,
+                    pendingLeaves.reduce(
+                      (sum, leave) => sum + leaveDays(leave),
                       0
                     )
                   }}
                 </strong>
-                <span>Total days</span>
+                <span>Pending approval</span>
               </div>
             </div>
 
@@ -917,6 +912,14 @@ onMounted(loadDashboard)
               </div>
             </div>
 
+          </div>
+
+          <div
+            v-else
+            class="leave-overview-empty"
+          >
+            <strong>No upcoming leaves</strong>
+            <span>You don't have any upcoming leave scheduled.</span>
           </div>
         </article>
 
@@ -1821,6 +1824,28 @@ onMounted(loadDashboard)
   .attention-heading-icon.pulse {
     animation: none;
   }
+}
+
+.leave-overview-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #64748b;
+}
+
+.leave-overview-empty strong {
+  color: #25324a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.leave-overview-empty span {
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 11px;
 }
 
 .leave-pie-layout {

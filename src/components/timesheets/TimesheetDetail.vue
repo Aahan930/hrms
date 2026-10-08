@@ -1,6 +1,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import TimesheetDailySubmission from './TimesheetDailySubmission.vue'
 
 const props = defineProps({
   isManager: {
@@ -19,6 +20,7 @@ const emit = defineEmits([
   'back',
   'edit',
   'submit',
+  'submit-day',
   'approve',
   'reject'
 ])
@@ -144,20 +146,6 @@ function formatHours(value) {
           </button>
 
           <button
-            v-if="canEdit"
-            type="button"
-            class="btn primary"
-            :disabled="submitting"
-            @click="emit('submit', timesheet.name)"
-          >
-            {{
-              submitting
-                ? 'Submitting…'
-                : isManager ? 'Submit' : 'Submit'
-            }}
-          </button>
-
-          <button
             v-if="canReview"
             type="button"
             class="btn danger"
@@ -240,46 +228,12 @@ function formatHours(value) {
           No work entries recorded for this timesheet.
         </div>
 
-        <div v-else class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>PROJECT</th>
-                <th>DELIVERABLES</th>
-                <th>ACTIVITY TYPE</th>
-                <th>DESCRIPTION</th>
-                <th>HOURS</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              <tr
-                v-for="(entry, index) in timesheet.time_logs"
-                :key="entry.name || index"
-              >
-                <td class="project">
-                  {{ entry.project || '—' }}
-                </td>
-
-                <td>
-                  {{ entry.deliverables || '—' }}
-                </td>
-
-                <td class="activity">
-                  {{ entry.activity_type || '—' }}
-                </td>
-
-                <td class="description">
-                  {{ entry.description || '—' }}
-                </td>
-
-                <td class="hours">
-                  {{ formatHours(entry.hours) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <TimesheetDailySubmission
+          v-else
+          :timesheet="timesheet"
+          :submitting-date="submittingDate"
+          @submit-day="emit('submit-day', $event)"
+        />
 
       </section>
 

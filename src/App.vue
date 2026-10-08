@@ -75,8 +75,8 @@ const hrLinks = computed(() =>
           icon: 'chart'
         },
         {
-          label: 'Leave Approvals',
-          to: '/approvals',
+          label: 'HR Tasks',
+          to: '/hr-tasks',
           icon: 'clipboard'
         }
       ]

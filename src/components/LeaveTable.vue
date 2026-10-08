@@ -46,8 +46,8 @@ function statusClass(value) {
   <div class="leave-register">
     <div v-if="!leaves.length" class="empty-state">
       <div class="empty-icon">▤</div>
-      <h3>No leave requests found</h3>
-      <p>Applications matching your selected filters will appear here.</p>
+      <h3>No leave requests yet</h3>
+      <p>Your submitted leave applications will appear here.</p>
     </div>
 
     <div v-else class="table-scroll">
